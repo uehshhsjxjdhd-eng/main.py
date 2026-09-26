@@ -43,7 +43,7 @@ th{color:var(--cyan);} .badge{background:rgba(56,189,248,0.2);color:var(--cyan);
 <button type="submit" style="width:100%;margin-top:10px;">Unlock Dashboard</button>
 </form>{% if error %}<p style="color:var(--red);">{{error}}</p>{% endif %}</div>
 {% else %}
-<div style="display:flex;justify-space-between;align-items:center;margin-bottom:15px;">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
 <h2>🤖 15M Proximity Pro</h2><a href="/logout" style="color:var(--red);text-decoration:none;">Logout</a>
 </div>
 <p><b>Last Sync:</b> <span id="last_update" style="color:var(--cyan);">{{status['last_update']}}</span></p>
@@ -148,24 +148,23 @@ def keep_alive():
         try: requests.get(RENDER_APP_URL, timeout=10)
         except Exception: pass
 
-def fetch_gold_spot():
-    for url in ["https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=15m&limit=200", "https://data-api.binance.vision/api/v3/klines?symbol=PAXGUSDT&interval=15m&limit=200"]:
+def get_klines_data(binance_symbol):
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    endpoints = [
+        f"https://api.binance.com/api/v3/klines?symbol={binance_symbol}&interval=15m&limit=200",
+        f"https://data-api.binance.vision/api/v3/klines?symbol={binance_symbol}&interval=15m&limit=200",
+        f"https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair={binance_symbol[:3]}_USDT&interval=15m&limit=200"
+    ]
+    for url in endpoints:
         try:
-            res = requests.get(url, timeout=5)
+            res = requests.get(url, headers=headers, timeout=5)
             if res.status_code == 200:
-                closes = [float(c[4]) for c in res.json()]
-                return closes[-1], (sum(closes[-200:]) / 200)
-        except Exception: continue
-    return None, None
-
-def fetch_btc_spot():
-    for url in ["https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=200", "https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=200"]:
-        try:
-            res = requests.get(url, timeout=5)
-            if res.status_code == 200:
-                closes = [float(c[4]) for c in res.json()]
-                return closes[-1], (sum(closes[-200:]) / 200)
-        except Exception: continue
+                data = res.json()
+                if isinstance(data, list) and len(data) >= 200:
+                    closes = [float(c[4] if len(c) > 4 else c[2]) for c in data[-200:]]
+                    return closes[-1], (sum(closes) / 200)
+        except Exception:
+            continue
     return None, None
 
 def bot_loop():
@@ -173,8 +172,10 @@ def bot_loop():
     while True:
         try:
             for pair, cfg in SYMBOLS_CONFIG.items():
-                p, b = fetch_gold_spot() if pair == "XAUUSD" else fetch_btc_spot()
-                if p and b:
+                bin_sym = "PAXGUSDT" if pair == "XAUUSD" else "BTCUSDT"
+                p, b = get_klines_data(bin_sym)
+                
+                if p is not None and b is not None:
                     diff = abs(p - b) * cfg["pip_multiplier"]
                     latest_status[pair] = f"Price: {p:.{cfg['decimals']}f} | 200 Line: {b:.{cfg['decimals']}f} | Dist: {diff:.1f} Pips"
                     if diff <= cfg["pip_buffer"] and (time.time() - last_alerts[pair] > 300):
@@ -182,6 +183,8 @@ def bot_loop():
                         send_telegram_broadcast(msg)
                         last_alerts[pair] = time.time()
                         alert_history.insert(0, {"time": get_bd_time(), "symbol": pair, "price": f"{p:.{cfg['decimals']}f}", "basis": f"{b:.{cfg['decimals']}f}", "distance": f"{diff:.1f}"})
+                else:
+                    latest_status[pair] = "Connecting to Market API..."
             latest_status["last_update"] = get_bd_time()
         except Exception: pass
         time.sleep(CHECK_INTERVAL)
@@ -194,4 +197,4 @@ start_threads()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
-        
+
