@@ -31,6 +31,7 @@ HTML_LAYOUT = """
 .container{max-width:1200px;margin:auto;} .card{background:var(--card);border:1px solid var(--border);padding:20px;border-radius:14px;margin-bottom:20px;}
 input{padding:10px;border-radius:8px;border:1px solid var(--border);background:#0f172a;color:#fff;margin:5px 0;}
 button{padding:10px 18px;border-radius:8px;border:none;background:#0284c7;color:#fff;font-weight:600;cursor:pointer;}
+.btn-alert{background:#10b981;}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:15px;}
 table{width:100%;border-collapse:collapse;margin-top:10px;} th,td{padding:10px;text-align:left;border-bottom:1px solid var(--border);}
 th{color:var(--cyan);} .badge{background:rgba(56,189,248,0.2);color:var(--cyan);padding:3px 8px;border-radius:4px;font-size:12px;}
@@ -47,6 +48,14 @@ th{color:var(--cyan);} .badge{background:rgba(56,189,248,0.2);color:var(--cyan);
 <h2>🤖 15M Proximity Pro</h2><a href="/logout" style="color:var(--red);text-decoration:none;">Logout</a>
 </div>
 <p><b>Last Sync:</b> <span id="last_update" style="color:var(--cyan);">{{status['last_update']}}</span></p>
+
+<div class="card" style="display:flex;gap:15px;align-items:center;">
+<h3>🔔 System Test:</h3>
+<form method="POST" action="/test_alert" style="margin:0;">
+<button type="submit" class="btn-alert">⚡ Send Test Alert</button>
+</form>
+</div>
+
 <div class="card">
 <h3>⚙️ Buffer Settings</h3>
 <form method="POST" action="/update_settings" style="display:flex;gap:10px;flex-wrap:wrap;">
@@ -54,6 +63,7 @@ XAU Buffer: <input type="number" step="0.1" name="xau_buffer" value="{{config['X
 BTC Buffer: <input type="number" step="0.1" name="btc_buffer" value="{{config['BTCUSD']['pip_buffer']}}" style="width:90px;">
 <button type="submit">Save Settings</button>
 </form></div>
+
 <div class="card">
 <h3>📲 Telegram Recipients</h3>
 <form method="POST" action="/add_chat_id">
@@ -61,14 +71,14 @@ BTC Buffer: <input type="number" step="0.1" name="btc_buffer" value="{{config['B
 <input type="password" name="auth_password" placeholder="Admin Password" required>
 <button type="submit">Add Chat ID</button>
 </form>
-{% if msg %}<p style="color:var(--green);">{{msg}}</p>{% endif %}
-{% if chat_error %}<p style="color:var(--red);">{{chat_error}}</p>{% endif %}
 <div>{% for cid in chat_ids %}<span class="badge">ID: {{cid}}</span> {% endfor %}</div>
 </div>
+
 <div class="grid">
 <div class="card"><h3>📌 XAUUSD</h3><p id="status_xau">{{status['XAUUSD']}}</p></div>
 <div class="card"><h3>📌 BTCUSD</h3><p id="status_btc">{{status['BTCUSD']}}</p></div>
 </div>
+
 <div class="card">
 <h3>📈 Live Chart</h3>
 <div style="height:350px;">
@@ -77,6 +87,7 @@ BTC Buffer: <input type="number" step="0.1" name="btc_buffer" value="{{config['B
 <script type="text/javascript">
 new TradingView.widget({"autosize":true,"symbol":"OANDA:XAUUSD","interval":"15","timezone":"Asia/Dhaka","theme":"dark","container_id":"tv_chart"});
 </script></div></div>
+
 <div class="card">
 <h3>📜 Alert Logs</h3>
 <table><thead><tr><th>Time</th><th>Symbol</th><th>Price</th><th>200 Line</th><th>Distance</th></tr></thead>
@@ -85,6 +96,7 @@ new TradingView.widget({"autosize":true,"symbol":"OANDA:XAUUSD","interval":"15",
 <tr><td>{{log['time']}}</td><td><b>{{log['symbol']}}</b></td><td>{{log['price']}}</td><td>{{log['basis']}}</td><td>{{log['distance']}} Pips</td></tr>
 {% else %}<tr><td colspan="5" style="text-align:center;">No alerts yet.</td></tr>{% endfor %}
 </tbody></table></div>
+
 <script>
 function updateData(){
 fetch('/api/live_data').then(r=>r.json()).then(d=>{
@@ -93,7 +105,7 @@ document.getElementById('status_btc').innerText=d.status.BTCUSD;
 document.getElementById('last_update').innerText=d.status.last_update;
 let h='';
 if(d.history.length===0){h='<tr><td colspan="5" style="text-align:center;">No alerts yet.</td></tr>';}
-else{d.history.forEach(l=>{h+=`<tr><td>${l.time}</td><td><b>${l.symbol}</b></td><td>${l.price}</td><td>${l.basis}</td><td>${l.distance} Pips</td></tr>`;});}
+else{d.history.forEach(l=>{h+=`<tr><td>${l.time}</td><td><b>${l.symbol}</b></td><td>${l.price}</td><td>${l.distance} Pips</td></tr>`;});}
 document.getElementById('history_body').innerHTML=h;
 });} setInterval(updateData,3000);
 </script>{% endif %}</div></body></html>
@@ -117,6 +129,12 @@ def login():
 @app.route('/logout')
 def logout():
     session.pop('logged_in', None)
+    return redirect('/')
+
+@app.route('/test_alert', methods=['POST'])
+def test_alert():
+    if session.get('logged_in'):
+        send_telegram_broadcast("🧪 *TEST ALERT:* Telegram Notification Bot is Working Fine!")
     return redirect('/')
 
 @app.route('/update_settings', methods=['POST'])
@@ -148,23 +166,35 @@ def keep_alive():
         try: requests.get(RENDER_APP_URL, timeout=10)
         except Exception: pass
 
-def get_klines_data(binance_symbol):
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-    endpoints = [
-        f"https://api.binance.com/api/v3/klines?symbol={binance_symbol}&interval=15m&limit=200",
-        f"https://data-api.binance.vision/api/v3/klines?symbol={binance_symbol}&interval=15m&limit=200",
-        f"https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair={binance_symbol[:3]}_USDT&interval=15m&limit=200"
-    ]
-    for url in endpoints:
-        try:
-            res = requests.get(url, headers=headers, timeout=5)
-            if res.status_code == 200:
-                data = res.json()
-                if isinstance(data, list) and len(data) >= 200:
-                    closes = [float(c[4] if len(c) > 4 else c[2]) for c in data[-200:]]
-                    return closes[-1], (sum(closes) / 200)
-        except Exception:
-            continue
+def fetch_market_data(symbol):
+    headers = {"User-Agent": "Mozilla/5.0"}
+    pair = "PAXGUSDT" if symbol == "XAUUSD" else "BTCUSDT"
+    
+    # Attempt 1: Binance Candlesticks
+    try:
+        r = requests.get(f"https://api.binance.com/api/v3/klines?symbol={pair}&interval=15m&limit=200", headers=headers, timeout=5)
+        if r.status_code == 200:
+            c = [float(x[4]) for x in r.json()]
+            return c[-1], sum(c)/len(c)
+    except Exception: pass
+    
+    # Attempt 2: Binance Vision Mirror
+    try:
+        r = requests.get(f"https://data-api.binance.vision/api/v3/klines?symbol={pair}&interval=15m&limit=200", headers=headers, timeout=5)
+        if r.status_code == 200:
+            c = [float(x[4]) for x in r.json()]
+            return c[-1], sum(c)/len(c)
+    except Exception: pass
+
+    # Attempt 3: CoinGecko Fallback
+    try:
+        cg_id = "tether-gold" if symbol == "XAUUSD" else "bitcoin"
+        r = requests.get(f"https://api.coingecko.com/api/v3/simple/price?ids={cg_id}&vs_currencies=usd", headers=headers, timeout=5)
+        if r.status_code == 200:
+            p = float(r.json()[cg_id]["usd"])
+            return p, p
+    except Exception: pass
+
     return None, None
 
 def bot_loop():
@@ -172,10 +202,8 @@ def bot_loop():
     while True:
         try:
             for pair, cfg in SYMBOLS_CONFIG.items():
-                bin_sym = "PAXGUSDT" if pair == "XAUUSD" else "BTCUSDT"
-                p, b = get_klines_data(bin_sym)
-                
-                if p is not None and b is not None:
+                p, b = fetch_market_data(pair)
+                if p and b:
                     diff = abs(p - b) * cfg["pip_multiplier"]
                     latest_status[pair] = f"Price: {p:.{cfg['decimals']}f} | 200 Line: {b:.{cfg['decimals']}f} | Dist: {diff:.1f} Pips"
                     if diff <= cfg["pip_buffer"] and (time.time() - last_alerts[pair] > 300):
@@ -183,8 +211,6 @@ def bot_loop():
                         send_telegram_broadcast(msg)
                         last_alerts[pair] = time.time()
                         alert_history.insert(0, {"time": get_bd_time(), "symbol": pair, "price": f"{p:.{cfg['decimals']}f}", "basis": f"{b:.{cfg['decimals']}f}", "distance": f"{diff:.1f}"})
-                else:
-                    latest_status[pair] = "Connecting to Market API..."
             latest_status["last_update"] = get_bd_time()
         except Exception: pass
         time.sleep(CHECK_INTERVAL)
@@ -197,4 +223,4 @@ start_threads()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
-
+    
