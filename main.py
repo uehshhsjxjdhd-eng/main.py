@@ -7,8 +7,8 @@ app.secret_key = "super_secret_trading_key_2026"
 DEFAULT_PASSWORD = "Rakib98"
 
 SYMBOLS_CONFIG = {
-    "XAUUSD": {"pip_multiplier": 10, "pip_buffer": 14.6, "decimals": 2, "bybit": "PAXGUSDT"},
-    "BTCUSD": {"pip_multiplier": 1,  "pip_buffer": 19.5, "decimals": 2, "bybit": "BTCUSDT"}
+    "XAUUSD": {"pip_multiplier": 10, "pip_buffer": 14.6, "decimals": 2, "ticker": "GC=F"},
+    "BTCUSD": {"pip_multiplier": 1,  "pip_buffer": 19.5, "decimals": 2, "ticker": "BTC-USD"}
 }
 
 TELEGRAM_CHAT_IDS = ["8910581056"]
@@ -174,16 +174,22 @@ def keep_alive():
         try: requests.get(RENDER_APP_URL, timeout=10)
         except Exception: pass
 
-def fetch_bybit_data(pair, symbol_name):
-    url = f"https://api.bybit.com/v5/market/kline?category=spot&symbol={pair}&interval=15&limit=200"
+def fetch_market_data(ticker):
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range=5d&interval=15m"
     try:
-        r = requests.get(url, timeout=5)
+        r = requests.get(url, headers=headers, timeout=8)
         if r.status_code == 200:
-            res = r.json()
-            kline_list = res.get("result", {}).get("list", [])
-            if len(kline_list) >= 200:
-                closes = [float(k[4]) for k in kline_list]
-                current_price = closes[0]
+            data = r.json()
+            result = data.get("chart", {}).get("result", [])[0]
+            closes = result.get("indicators", {}).get("quote", [])[0].get("close", [])
+            closes = [c for c in closes if c is not None]
+            if len(closes) >= 200:
+                current_price = closes[-1]
+                sma_200 = sum(closes[-200:]) / 200
+                return current_price, sma_200
+            elif len(closes) > 0:
+                current_price = closes[-1]
                 sma_200 = sum(closes) / len(closes)
                 return current_price, sma_200
     except Exception: pass
@@ -195,7 +201,7 @@ def bot_loop():
     while True:
         try:
             for pair, cfg in SYMBOLS_CONFIG.items():
-                p, b = fetch_bybit_data(cfg["bybit"], pair)
+                p, b = fetch_market_data(cfg["ticker"])
                 if p and b:
                     diff = abs(p - b) * cfg["pip_multiplier"]
                     latest_status[pair] = f"Price: {p:.{cfg['decimals']}f} | 200 Line: {b:.{cfg['decimals']}f} | Dist: {diff:.1f} Pips"
@@ -218,3 +224,4 @@ start_threads()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    
