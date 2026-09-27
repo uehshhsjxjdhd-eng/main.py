@@ -18,8 +18,8 @@ SYMBOLS_CONFIG = {
 TELEGRAM_CHAT_IDS = ["8910581056"]
 
 latest_status = {
-    "XAUUSD": "Initializing...",
-    "BTCUSD": "Initializing..."
+    "XAUUSD": "Syncing XAUUSD...",
+    "BTCUSD": "Syncing BTCUSD..."
 }
 
 alert_history = []
@@ -36,20 +36,21 @@ HTML_LAYOUT = """
 <html>
 <head>
     <title>Pro Trading Terminal</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; background: #0f172a; color: #38bdf8; margin: 0; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 15px; background: #0f172a; color: #38bdf8; margin: 0; }
         .container { max-width: 1200px; margin: auto; }
-        .card { background: #1e293b; border: 1px solid #334155; padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.5); }
+        .card { background: #1e293b; border: 1px solid #334155; padding: 18px; border-radius: 12px; margin-bottom: 15px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.5); }
         h1, h2, h3 { color: #f8fafc; margin-top: 0; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
-        input, button { padding: 10px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #fff; margin-right: 10px; margin-bottom: 5px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 15px; }
+        input, button { padding: 10px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #fff; margin-right: 5px; margin-bottom: 5px; }
         button { background: #0284c7; cursor: pointer; border: none; font-weight: bold; }
         button:hover { background: #0369a1; }
         table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-        th, td { border: 1px solid #334155; padding: 10px; text-align: left; }
+        th, td { border: 1px solid #334155; padding: 8px; text-align: left; font-size: 14px; }
         th { background: #334155; color: #f8fafc; }
-        .login-box { max-width: 400px; margin: 100px auto; padding: 30px; text-align: center; }
-        .chart-container { height: 400px; margin-top: 15px; }
+        .login-box { max-width: 380px; margin: 80px auto; padding: 25px; text-align: center; }
+        .chart-container { height: 380px; margin-top: 10px; }
         .badge { background: #0284c7; color: white; padding: 3px 8px; border-radius: 4px; font-size: 12px; }
     </style>
 </head>
@@ -59,15 +60,16 @@ HTML_LAYOUT = """
         <div class="card login-box">
             <h2>🔒 Dashboard Access</h2>
             <form method="POST" action="/login">
-                <input type="password" name="password" placeholder="Enter Password" required>
-                <button type="submit">Unlock</button>
+                <input type="password" name="password" placeholder="Enter Password" required style="width: 80%;">
+                <br><br>
+                <button type="submit">Unlock Terminal</button>
             </form>
             {% if error %}<p style="color: #ef4444;">{{ error }}</p>{% endif %}
         </div>
         {% else %}
         
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-            <h1>🤖 15M Proximity Pro Control</h1>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+            <h2 style="margin:0;">🤖 15M Proximity Pro</h2>
             <a href="/logout" style="color: #ef4444; text-decoration: none; font-weight: bold;">Logout</a>
         </div>
 
@@ -75,49 +77,44 @@ HTML_LAYOUT = """
         <div class="card">
             <h3>⚙️ Settings & Buffer Limits</h3>
             <form method="POST" action="/update_settings" style="display: inline-block; margin-bottom: 10px;">
-                <label>XAUUSD Buffer (Pips): </label>
-                <input type="number" step="0.1" name="xau_buffer" value="{{ config['XAUUSD']['pip_buffer'] }}">
-                <label>BTCUSD Buffer (Pips): </label>
-                <input type="number" step="0.1" name="btc_buffer" value="{{ config['BTCUSD']['pip_buffer'] }}">
-                <button type="submit">Save Buffer Settings</button>
+                XAU Buffer: <input type="number" step="0.1" name="xau_buffer" value="{{ config['XAUUSD']['pip_buffer'] }}" style="width: 70px;">
+                BTC Buffer: <input type="number" step="0.1" name="btc_buffer" value="{{ config['BTCUSD']['pip_buffer'] }}" style="width: 70px;">
+                <button type="submit">Save Buffer</button>
             </form>
             <form method="POST" action="/test_alert" style="display: inline-block;">
-                <button type="submit" style="background: #16a34a;">🚀 Test Telegram Alert</button>
+                <button type="submit" style="background: #16a34a;">🚀 Test Telegram</button>
             </form>
         </div>
 
         <!-- Telegram Subscriber Manager -->
         <div class="card">
             <h3>📲 Telegram Recipients Manager</h3>
-            <p><small>নতুন যেকোনো টেলিগ্রাম ইউজার আইডি যোগ করুন, সিগন্যাল সবার কাছে একসাথে চলে যাবে।</small></p>
-            
-            <form method="POST" action="/add_chat_id" style="margin-bottom: 15px;">
-                <input type="text" name="new_chat_id" placeholder="New Telegram Chat ID" required>
-                <input type="password" name="auth_password" placeholder="Admin Password" required>
-                <button type="submit" style="background: #8b5cf6;">➕ Add Telegram Subscriber</button>
+            <form method="POST" action="/add_chat_id" style="margin-bottom: 10px;">
+                <input type="text" name="new_chat_id" placeholder="Telegram Chat ID" required>
+                <input type="password" name="auth_password" placeholder="Password" required>
+                <button type="submit" style="background: #8b5cf6;">Add ID</button>
             </form>
 
-            {% if msg %}<p style="color: #10b981;">{{ msg }}</p>{% endif %}
-            {% if chat_error %}<p style="color: #ef4444;">{{ chat_error }}</p>{% endif %}
+            {% if msg %}<p style="color: #10b981; margin: 5px 0;">{{ msg }}</p>{% endif %}
+            {% if chat_error %}<p style="color: #ef4444; margin: 5px 0;">{{ chat_error }}</p>{% endif %}
 
-            <p><b>Active Recipients List:</b></p>
-            <ul>
+            <div style="margin-top: 5px;">
                 {% for cid in chat_ids %}
-                    <li>Chat ID: <code>{{ cid }}</code> <span class="badge">Active</span></li>
+                    <span class="badge">ID: {{ cid }}</span> 
                 {% endfor %}
-            </ul>
+            </div>
         </div>
 
         <!-- Live Price Grid -->
         <div class="grid">
             <div class="card">
                 <h3>📌 XAUUSD (Gold Spot)</h3>
-                <p id="status_xau">{{ status['XAUUSD'] }}</p>
+                <p id="status_xau" style="font-size: 15px; font-weight: bold; color: #f8fafc;">{{ status['XAUUSD'] }}</p>
                 <p><small>Alert Trigger: <= {{ config['XAUUSD']['pip_buffer'] }} Pips</small></p>
             </div>
             <div class="card">
                 <h3>📌 BTCUSD (Bitcoin)</h3>
-                <p id="status_btc">{{ status['BTCUSD'] }}</p>
+                <p id="status_btc" style="font-size: 15px; font-weight: bold; color: #f8fafc;">{{ status['BTCUSD'] }}</p>
                 <p><small>Alert Trigger: <= {{ config['BTCUSD']['pip_buffer'] }} Pips</small></p>
             </div>
         </div>
@@ -157,14 +154,14 @@ HTML_LAYOUT = """
                         <th>Symbol</th>
                         <th>Price</th>
                         <th>200 Line</th>
-                        <th>Distance (Pips)</th>
+                        <th>Distance</th>
                     </tr>
                 </thead>
                 <tbody id="history_body">
                     {% for log in history %}
                     <tr>
                         <td>{{ log['time'] }}</td>
-                        <td>{{ log['symbol'] }}</td>
+                        <td><b>{{ log['symbol'] }}</b></td>
                         <td>{{ log['price'] }}</td>
                         <td>{{ log['basis'] }}</td>
                         <td>{{ log['distance'] }} Pips</td>
@@ -180,7 +177,7 @@ HTML_LAYOUT = """
         
         <script>
             function updateData() {
-                fetch('/api/live_data?_t=' + new Date().getTime(), { cache: 'no-store' })
+                fetch('/api/live_data?nocache=' + new Date().getTime(), { cache: 'no-store' })
                     .then(response => response.json())
                     .then(data => {
                         if(data.status) {
@@ -195,7 +192,7 @@ HTML_LAYOUT = """
                             data.history.forEach(log => {
                                 historyHtml += `<tr>
                                     <td>${log.time}</td>
-                                    <td>${log.symbol}</td>
+                                    <td><b>${log.symbol}</b></td>
                                     <td>${log.price}</td>
                                     <td>${log.basis}</td>
                                     <td>${log.distance} Pips</td>
@@ -295,47 +292,76 @@ def keep_alive():
         except Exception:
             pass
 
-def fetch_klines(symbol):
-    endpoints = [
-        f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval=15m&limit=200",
-        f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=15m&limit=200",
-        f"https://api1.binance.com/api/v3/klines?symbol={symbol}&interval=15m&limit=200"
-    ]
+def fetch_gold_spot_realtime():
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-    for url in endpoints:
-        try:
-            res = requests.get(url, headers=headers, timeout=3)
-            if res.status_code == 200:
-                data = res.json()
-                if isinstance(data, list) and len(data) >= 10:
-                    closes = [float(c[4]) for c in data]
-                    current_price = closes[-1]
-                    sma_200 = sum(closes) / len(closes)
-                    return current_price, sma_200
-        except Exception:
-            continue
-            
-    # CryptoCompare Fallback API
+    
+    # 1st Source: Binance Futures XAUUSDT / PAXGUSDT Direct klines
     try:
-        cc_symbol = "BTC" if "BTC" in symbol else "PAXG"
-        cc_url = f"https://min-api.cryptocompare.com/data/v2/histominute?fsym={cc_symbol}&tsym=USD&limit=200&aggregate=15"
-        res = requests.get(cc_url, headers=headers, timeout=3)
+        url = "https://fapi.binance.com/fapi/v1/klines?symbol=XAUUSDT&interval=15m&limit=200"
+        res = requests.get(url, headers=headers, timeout=3)
         if res.status_code == 200:
-            d = res.json()
-            data = d.get("Data", {}).get("Data", [])
-            if len(data) >= 10:
-                closes = [float(c['close']) for c in data]
+            data = res.json()
+            if isinstance(data, list) and len(data) >= 10:
+                closes = [float(c[4]) for c in data]
                 return closes[-1], sum(closes) / len(closes)
+    except Exception:
+        pass
+
+    # 2nd Source: KuCoin XAUUSDT Spot
+    try:
+        url = "https://api.kucoin.com/api/v1/market/candles?symbol=XAU-USDT&type=15min"
+        res = requests.get(url, headers=headers, timeout=3)
+        if res.status_code == 200:
+            data = res.json().get('data', [])
+            if len(data) >= 10:
+                closes = [float(c[2]) for c in data[:200]]
+                return closes[0], sum(closes) / len(closes)
+    except Exception:
+        pass
+
+    # 3rd Source: Yahoo Finance Gold Spot (GC=F)
+    try:
+        url = "https://query1.finance.yahoo.com/v8/finance/chart/GC=F?range=5d&interval=15m"
+        res = requests.get(url, headers=headers, timeout=3)
+        if res.status_code == 200:
+            result = res.json()['chart']['result'][0]
+            closes = [c for c in result['indicators']['quote'][0]['close'] if c is not None]
+            if len(closes) >= 10:
+                recent_closes = closes[-200:]
+                return recent_closes[-1], sum(recent_closes) / len(recent_closes)
     except Exception:
         pass
 
     return None, None
 
+def fetch_btc_spot_realtime():
+    headers = {"User-Agent": "Mozilla/5.0"}
+    urls = [
+        "https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=200",
+        "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=200",
+        "https://api.kucoin.com/api/v1/market/candles?symbol=BTC-USDT&type=15min"
+    ]
+    for url in urls:
+        try:
+            res = requests.get(url, headers=headers, timeout=3)
+            if res.status_code == 200:
+                data = res.json()
+                if 'kucoin' in url and 'data' in data:
+                    klines = data['data']
+                    closes = [float(c[2]) for c in klines[:200]]
+                    return closes[0], sum(closes) / len(closes)
+                elif isinstance(data, list) and len(data) >= 10:
+                    closes = [float(c[4]) for c in data]
+                    return closes[-1], sum(closes) / len(closes)
+        except Exception:
+            continue
+    return None, None
+
 def get_market_data(symbol):
     if symbol == "XAUUSD":
-        return fetch_klines("PAXGUSDT")
+        return fetch_gold_spot_realtime()
     elif symbol == "BTCUSD":
-        return fetch_klines("BTCUSDT")
+        return fetch_btc_spot_realtime()
     return None, None
 
 def bot_loop():
@@ -388,4 +414,4 @@ if not any(t.name == "keep_alive_thread" for t in threading.enumerate()):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-                        
+            
