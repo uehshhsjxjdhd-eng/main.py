@@ -51,7 +51,6 @@ HTML_LAYOUT = """
         th, td { border: 1px solid #334155; padding: 8px; text-align: left; font-size: 14px; }
         th { background: #334155; color: #f8fafc; }
         .login-box { max-width: 380px; margin: 80px auto; padding: 25px; text-align: center; }
-        .badge { background: #0284c7; color: white; padding: 3px 8px; border-radius: 4px; font-size: 12px; }
     </style>
 </head>
 <body>
@@ -193,7 +192,6 @@ def test_alert():
         send_telegram_broadcast("✅ *TEST ALERT:* MT4 Live Webhook Engine Active!")
     return redirect('/')
 
-# MT4 WEBHOOK RECEIVER
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
@@ -211,15 +209,12 @@ def webhook():
         basis = float(data.get("basis", 0))
         distance = float(data.get("distance", 0))
 
-        # ড্যাশবোর্ডে সরাসরি রিয়েল-টাইম টেক্সট আপডেট
         status_text = f"Price: {price:.2f} | 200 Line: {basis:.2f} | Distance: {distance:.1f} Pips"
         latest_status[symbol] = status_text
 
-        # বাফার চেক করে টেলিগ্রামে অ্যালার্ট
         limit_pips = SYMBOLS_CONFIG.get(symbol, {}).get("pip_buffer", 15.0)
         
         if distance <= limit_pips:
-            # ৫ মিনিটের কুলডাউন যেন বারবার স্প্যাম না হয়
             if time.time() - last_alert_times.get(symbol, 0) > 300:
                 msg = (
                     f"🚨 *MT4 PROXIMITY ALERT ({limit_pips} PIPS)!* 🚨\n\n"
