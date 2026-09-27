@@ -293,24 +293,28 @@ def keep_alive():
             pass
 
 def fetch_gold_data():
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-    # Source 1: Yahoo Finance API (No IP restrictions)
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    
+    # Provider 1: Kraken Public API (XAUUSD Spot)
     try:
-        url = "https://query1.finance.yahoo.com/v8/finance/chart/GC=F?range=5d&interval=15m"
-        res = requests.get(url, headers=headers, timeout=4)
+        url = "https://api.kraken.com/0/public/OHLC?pair=XAUUSD&interval=15"
+        res = requests.get(url, headers=headers, timeout=5)
         if res.status_code == 200:
-            result = res.json()['chart']['result'][0]
-            closes = [c for c in result['indicators']['quote'][0]['close'] if c is not None]
-            if len(closes) >= 200:
-                recent = closes[-200:]
-                return recent[-1], sum(recent) / 200
+            data = res.json()
+            if 'result' in data and len(data['result']) > 0:
+                key = list(data['result'].keys())[0]
+                candles = data['result'][key]
+                closes = [float(c[4]) for c in candles]
+                if len(closes) >= 200:
+                    recent = closes[-200:]
+                    return recent[-1], sum(recent) / 200
     except Exception:
         pass
 
-    # Source 2: CoinGecko Pax Gold (Spot Equivalent)
+    # Provider 2: CoinGecko Paxos Gold (PAXG/USD Spot Gold Equivalent)
     try:
-        url = "https://api.coingecko.com/api/v3/coins/paxos-gold/market_chart?vs_currency=usd&days=2"
-        res = requests.get(url, headers=headers, timeout=4)
+        url = "https://api.coingecko.com/api/v3/coins/paxos-gold/market_chart?vs_currency=usd&days=3"
+        res = requests.get(url, headers=headers, timeout=5)
         if res.status_code == 200:
             prices = [p[1] for p in res.json().get('prices', [])]
             if len(prices) >= 200:
@@ -322,29 +326,33 @@ def fetch_gold_data():
     return None, None
 
 def fetch_btc_data():
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-    # Source 1: Yahoo Finance BTC-USD
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    
+    # Provider 1: Binance US Public API (No Region Restriction)
     try:
-        url = "https://query1.finance.yahoo.com/v8/finance/chart/BTC-USD?range=5d&interval=15m"
-        res = requests.get(url, headers=headers, timeout=4)
+        url = "https://api.binance.us/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=200"
+        res = requests.get(url, headers=headers, timeout=5)
         if res.status_code == 200:
-            result = res.json()['chart']['result'][0]
-            closes = [c for c in result['indicators']['quote'][0]['close'] if c is not None]
+            candles = res.json()
+            closes = [float(c[4]) for c in candles]
             if len(closes) >= 200:
-                recent = closes[-200:]
-                return recent[-1], sum(recent) / 200
+                return closes[-1], sum(closes) / 200
     except Exception:
         pass
 
-    # Source 2: CoinGecko BTC
+    # Provider 2: Kraken Public API
     try:
-        url = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=2"
-        res = requests.get(url, headers=headers, timeout=4)
+        url = "https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=15"
+        res = requests.get(url, headers=headers, timeout=5)
         if res.status_code == 200:
-            prices = [p[1] for p in res.json().get('prices', [])]
-            if len(prices) >= 200:
-                recent = prices[-200:]
-                return recent[-1], sum(recent) / 200
+            data = res.json()
+            if 'result' in data and len(data['result']) > 0:
+                key = list(data['result'].keys())[0]
+                candles = data['result'][key]
+                closes = [float(c[4]) for c in candles]
+                if len(closes) >= 200:
+                    recent = closes[-200:]
+                    return recent[-1], sum(recent) / 200
     except Exception:
         pass
 
@@ -407,3 +415,4 @@ if not any(t.name == "keep_alive_thread" for t in threading.enumerate()):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+            
