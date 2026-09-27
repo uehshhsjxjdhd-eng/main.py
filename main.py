@@ -18,9 +18,8 @@ SYMBOLS_CONFIG = {
 TELEGRAM_CHAT_IDS = ["8910581056"]
 
 latest_status = {
-    "XAUUSD": "Fetching data...",
-    "BTCUSD": "Fetching data...",
-    "last_update": "Initializing..."
+    "XAUUSD": "Initializing...",
+    "BTCUSD": "Initializing..."
 }
 
 alert_history = []
@@ -67,11 +66,10 @@ HTML_LAYOUT = """
         </div>
         {% else %}
         
-        <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
             <h1>🤖 15M Proximity Pro Control</h1>
             <a href="/logout" style="color: #ef4444; text-decoration: none; font-weight: bold;">Logout</a>
         </div>
-        <p><b>Last System Sync:</b> <span id="last_update" style="color:#38bdf8; font-weight:bold;">{{ status['last_update'] }}</span></p>
 
         <!-- Settings -->
         <div class="card">
@@ -186,9 +184,8 @@ HTML_LAYOUT = """
                     .then(response => response.json())
                     .then(data => {
                         if(data.status) {
-                            document.getElementById('status_xau').innerText = data.status.XAUUSD;
-                            document.getElementById('status_btc').innerText = data.status.BTCUSD;
-                            document.getElementById('last_update').innerText = data.status.last_update;
+                            if(data.status.XAUUSD) document.getElementById('status_xau').innerText = data.status.XAUUSD;
+                            if(data.status.BTCUSD) document.getElementById('status_btc').innerText = data.status.BTCUSD;
                         }
 
                         let historyHtml = '';
@@ -307,7 +304,7 @@ def fetch_klines(symbol):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     for url in endpoints:
         try:
-            res = requests.get(url, headers=headers, timeout=4)
+            res = requests.get(url, headers=headers, timeout=3)
             if res.status_code == 200:
                 data = res.json()
                 if isinstance(data, list) and len(data) >= 10:
@@ -317,6 +314,21 @@ def fetch_klines(symbol):
                     return current_price, sma_200
         except Exception:
             continue
+            
+    # CryptoCompare Fallback API
+    try:
+        cc_symbol = "BTC" if "BTC" in symbol else "PAXG"
+        cc_url = f"https://min-api.cryptocompare.com/data/v2/histominute?fsym={cc_symbol}&tsym=USD&limit=200&aggregate=15"
+        res = requests.get(cc_url, headers=headers, timeout=3)
+        if res.status_code == 200:
+            d = res.json()
+            data = d.get("Data", {}).get("Data", [])
+            if len(data) >= 10:
+                closes = [float(c['close']) for c in data]
+                return closes[-1], sum(closes) / len(closes)
+    except Exception:
+        pass
+
     return None, None
 
 def get_market_data(symbol):
@@ -330,8 +342,8 @@ def bot_loop():
     last_alert_times = {pair: 0 for pair in SYMBOLS_CONFIG}
     
     while True:
-        try:
-            for pair_name, config in SYMBOLS_CONFIG.items():
+        for pair_name, config in SYMBOLS_CONFIG.items():
+            try:
                 price, bb_basis = get_market_data(pair_name)
                 
                 if price is not None and bb_basis is not None:
@@ -362,10 +374,8 @@ def bot_loop():
                                 "basis": f"{bb_basis:.{dec}f}",
                                 "distance": f"{pips_diff:.1f}"
                             })
-                
-                latest_status["last_update"] = get_bd_time()
-        except Exception:
-            pass
+            except Exception:
+                pass
         time.sleep(CHECK_INTERVAL)
 
 # Thread Protection
@@ -378,4 +388,4 @@ if not any(t.name == "keep_alive_thread" for t in threading.enumerate()):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-                    
+                        
