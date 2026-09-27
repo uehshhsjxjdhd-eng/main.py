@@ -7,17 +7,17 @@ app.secret_key = "super_secret_trading_key_2026"
 DEFAULT_PASSWORD = "Rakib98"
 
 SYMBOLS_CONFIG = {
-    "XAUUSD": {"pip_multiplier": 10, "pip_buffer": 14.6, "decimals": 2},
-    "BTCUSD": {"pip_multiplier": 1,  "pip_buffer": 19.5, "decimals": 2}
+    "XAUUSD": {"pip_multiplier": 10, "pip_buffer": 14.6, "decimals": 2, "binance": "PAXGUSDT"},
+    "BTCUSD": {"pip_multiplier": 1,  "pip_buffer": 19.5, "decimals": 2, "binance": "BTCUSDT"}
 }
 
 TELEGRAM_CHAT_IDS = ["8910581056"]
 latest_status = {"XAUUSD": "Fetching...", "BTCUSD": "Fetching...", "last_update": "Initializing..."}
 alert_history = []
+sma_cache = {"XAUUSD": 0.0, "BTCUSD": 0.0}
 
 TELEGRAM_BOT_TOKEN = "8642092487:AAEIHzt94t8xNMfn6kyWZP2FgdRqprPJWV8"
 RENDER_APP_URL = "https://telegram-signal-bot-1-uhq3.onrender.com"
-CHECK_INTERVAL = 2
 
 def get_bd_time():
     return datetime.now(timezone(timedelta(hours=6))).strftime("%I:%M:%S %p BST")
@@ -98,11 +98,10 @@ new TradingView.widget({"autosize":true,"symbol":"OANDA:XAUUSD","interval":"15",
 </tbody></table></div>
 
 <script>
-async function updateData() {
-    try {
-        let res = await fetch('/api/live_data?t=' + new Date().getTime());
-        if (res.ok) {
-            let d = await res.json();
+function fetchUpdates() {
+    fetch('/api/live_data?_t=' + Date.now())
+        .then(res => res.json())
+        .then(d => {
             document.getElementById('status_xau').innerText = d.status.XAUUSD;
             document.getElementById('status_btc').innerText = d.status.BTCUSD;
             document.getElementById('last_update').innerText = d.status.last_update;
@@ -115,12 +114,9 @@ async function updateData() {
                 });
             }
             document.getElementById('history_body').innerHTML = h;
-        }
-    } catch (e) {
-        console.log("Fetch error:", e);
-    }
+        }).catch(err => console.log(err));
 }
-setInterval(updateData, 2000);
+setInterval(fetchUpdates, 2000);
 </script>{% endif %}</div></body></html>
 """
 
@@ -179,56 +175,53 @@ def keep_alive():
         try: requests.get(RENDER_APP_URL, timeout=10)
         except Exception: pass
 
-def fetch_market_data(symbol):
+def update_sma_values():
     headers = {"User-Agent": "Mozilla/5.0"}
-    pair = "PAXGUSDT" if symbol == "XAUUSD" else "BTCUSDT"
-    
-    endpoints = [
-        f"https://api.binance.com/api/v3/klines?symbol={pair}&interval=15m&limit=200",
-        f"https://data-api.binance.vision/api/v3/klines?symbol={pair}&interval=15m&limit=200"
-    ]
-    for url in endpoints:
-        try:
-            r = requests.get(url, headers=headers, timeout=3)
-            if r.status_code == 200:
-                c = [float(x[4]) for x in r.json()]
-                return c[-1], sum(c)/len(c)
-        except Exception: pass
-
-    try:
-        cg_id = "tether-gold" if symbol == "XAUUSD" else "bitcoin"
-        r = requests.get(f"https://api.coingecko.com/api/v3/simple/price?ids={cg_id}&vs_currencies=usd", headers=headers, timeout=3)
-        if r.status_code == 200:
-            p = float(r.json()[cg_id]["usd"])
-            return p, p
-    except Exception: pass
-
-    return None, None
+    while True:
+        for pair, cfg in SYMBOLS_CONFIG.items():
+            sym = cfg["binance"]
+            try:
+                url = f"https://api.binance.com/api/v3/klines?symbol={sym}&interval=15m&limit=200"
+                r = requests.get(url, headers=headers, timeout=5)
+                if r.status_code == 200:
+                    closes = [float(x[4]) for x in r.json()]
+                    sma_cache[pair] = sum(closes) / len(closes)
+            except Exception: pass
+        time.sleep(30)
 
 def bot_loop():
+    headers = {"User-Agent": "Mozilla/5.0"}
     last_alerts = {p: 0 for p in SYMBOLS_CONFIG}
+    
     while True:
         try:
             for pair, cfg in SYMBOLS_CONFIG.items():
-                p, b = fetch_market_data(pair)
-                if p and b:
-                    diff = abs(p - b) * cfg["pip_multiplier"]
-                    latest_status[pair] = f"Price: {p:.{cfg['decimals']}f} | 200 Line: {b:.{cfg['decimals']}f} | Dist: {diff:.1f} Pips"
+                sym = cfg["binance"]
+                r = requests.get(f"https://api.binance.com/api/v3/ticker/price?symbol={sym}", headers=headers, timeout=3)
+                if r.status_code == 200:
+                    price = float(r.json()["price"])
+                    basis = sma_cache[pair] if sma_cache[pair] > 0 else price
+                    diff = abs(price - basis) * cfg["pip_multiplier"]
+                    
+                    latest_status[pair] = f"Price: {price:.{cfg['decimals']}f} | 200 Line: {basis:.{cfg['decimals']}f} | Dist: {diff:.1f} Pips"
+                    
                     if diff <= cfg["pip_buffer"] and (time.time() - last_alerts[pair] > 300):
-                        msg = f"🚨 *{pair} ALERT!*\nPrice: {p:.{cfg['decimals']}f}\n200 Line: {b:.{cfg['decimals']}f}\nDist: {diff:.1f} Pips\nTime: {get_bd_time()}"
+                        msg = f"🚨 *{pair} ALERT!*\nPrice: {price:.{cfg['decimals']}f}\n200 Line: {basis:.{cfg['decimals']}f}\nDist: {diff:.1f} Pips\nTime: {get_bd_time()}"
                         send_telegram_broadcast(msg)
                         last_alerts[pair] = time.time()
-                        alert_history.insert(0, {"time": get_bd_time(), "symbol": pair, "price": f"{p:.{cfg['decimals']}f}", "basis": f"{b:.{cfg['decimals']}f}", "distance": f"{diff:.1f}"})
+                        alert_history.insert(0, {"time": get_bd_time(), "symbol": pair, "price": f"{price:.{cfg['decimals']}f}", "basis": f"{basis:.{cfg['decimals']}f}", "distance": f"{diff:.1f}"})
+            
             latest_status["last_update"] = get_bd_time()
         except Exception: pass
-        time.sleep(CHECK_INTERVAL)
+        time.sleep(2)
 
 def start_threads():
     threading.Thread(target=keep_alive, daemon=True).start()
+    threading.Thread(target=update_sma_values, daemon=True).start()
     threading.Thread(target=bot_loop, daemon=True).start()
 
 start_threads()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
-    
+                    
