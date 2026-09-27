@@ -1,141 +1,235 @@
-import os, time, threading, requests
-from datetime import datetime, timedelta, timezone
-from flask import Flask, request, session, redirect, render_template_string, jsonify, make_response
+import os
+import time
+import threading
+import requests
+from flask import Flask, request, session, redirect, render_template_string, jsonify
 
 app = Flask(__name__)
 app.secret_key = "super_secret_trading_key_2026"
-DEFAULT_PASSWORD = "Rakib98"
+
+DEFAULT_PASSWORD = "1234"
 
 SYMBOLS_CONFIG = {
-    "XAUUSD": {"pip_multiplier": 10, "pip_buffer": 14.6, "decimals": 2, "ticker": "PAXGUSDT"},
-    "BTCUSD": {"pip_multiplier": 1,  "pip_buffer": 19.5, "decimals": 2, "ticker": "BTCUSDT"}
+    "XAUUSD": {"pip_multiplier": 10, "pip_buffer": 14.6, "decimals": 2},
+    "BTCUSD": {"pip_multiplier": 1,  "pip_buffer": 19.5, "decimals": 2}
 }
 
 TELEGRAM_CHAT_IDS = ["8910581056"]
-latest_status = {"XAUUSD": "Initializing...", "BTCUSD": "Initializing...", "last_update": "Initializing..."}
+
+latest_status = {
+    "XAUUSD": "Fetching data...",
+    "BTCUSD": "Fetching data...",
+    "last_update": "Initializing..."
+}
+
 alert_history = []
 
 TELEGRAM_BOT_TOKEN = "8642092487:AAEIHzt94t8xNMfn6kyWZP2FgdRqprPJWV8"
-RENDER_APP_URL = "https://telegram-signal-bot-1-uhq3.onrender.com"
-
-def get_bd_time():
-    return datetime.now(timezone(timedelta(hours=6))).strftime("%I:%M:%S %p BST")
+RENDER_APP_URL = "https://bot-y282.onrender.com"
+CHECK_INTERVAL = 3
 
 HTML_LAYOUT = """
-<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Pro Trading Terminal</title>
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700&display=swap" rel="stylesheet">
-<style>
-:root{--bg:#0b0f19;--card:rgba(30,41,59,0.6);--border:rgba(255,255,255,0.08);--cyan:#38bdf8;--green:#10b981;--red:#f43f5e;--text:#f8fafc;}
-*{box-sizing:border-box;} body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(--text);margin:0;padding:20px 10px;}
-.container{max-width:1200px;margin:auto;} .card{background:var(--card);border:1px solid var(--border);padding:20px;border-radius:14px;margin-bottom:20px;}
-input{padding:10px;border-radius:8px;border:1px solid var(--border);background:#0f172a;color:#fff;margin:5px 0;}
-button{padding:10px 18px;border-radius:8px;border:none;background:#0284c7;color:#fff;font-weight:600;cursor:pointer;}
-.btn-alert{background:#10b981;}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:15px;}
-table{width:100%;border-collapse:collapse;margin-top:10px;} th,td{padding:10px;text-align:left;border-bottom:1px solid var(--border);}
-th{color:var(--cyan);} .badge{background:rgba(56,189,248,0.2);color:var(--cyan);padding:3px 8px;border-radius:4px;font-size:12px;}
-</style></head><body><div class="container">
-{% if not logged_in %}
-<div class="card" style="max-width:380px;margin:50px auto;text-align:center;">
-<h2>🔒 Terminal Access</h2>
-<form method="POST" action="/login">
-<input type="password" name="password" placeholder="Admin Password" required style="width:100%;"><br>
-<button type="submit" style="width:100%;margin-top:10px;">Unlock Dashboard</button>
-</form>{% if error %}<p style="color:var(--red);">{{error}}</p>{% endif %}</div>
-{% else %}
-<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-<h2>🤖 15M Proximity Pro</h2><a href="/logout" style="color:var(--red);text-decoration:none;">Logout</a>
-</div>
-<p><b>Last Sync:</b> <span id="last_update" style="color:var(--cyan);font-weight:bold;">{{status['last_update']}}</span></p>
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Pro Trading Terminal</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; background: #0f172a; color: #38bdf8; margin: 0; }
+        .container { max-width: 1200px; margin: auto; }
+        .card { background: #1e293b; border: 1px solid #334155; padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.5); }
+        h1, h2, h3 { color: #f8fafc; margin-top: 0; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+        input, button { padding: 10px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #fff; margin-right: 10px; margin-bottom: 5px; }
+        button { background: #0284c7; cursor: pointer; border: none; font-weight: bold; }
+        button:hover { background: #0369a1; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { border: 1px solid #334155; padding: 10px; text-align: left; }
+        th { background: #334155; color: #f8fafc; }
+        .login-box { max-width: 400px; margin: 100px auto; padding: 30px; text-align: center; }
+        .chart-container { height: 400px; margin-top: 15px; }
+        .badge { background: #0284c7; color: white; padding: 3px 8px; border-radius: 4px; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        {% if not logged_in %}
+        <div class="card login-box">
+            <h2>🔒 Dashboard Access</h2>
+            <form method="POST" action="/login">
+                <input type="password" name="password" placeholder="Enter Password" required>
+                <button type="submit">Unlock</button>
+            </form>
+            {% if error %}<p style="color: #ef4444;">{{ error }}</p>{% endif %}
+        </div>
+        {% else %}
+        
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h1>🤖 15M Proximity Pro Control</h1>
+            <a href="/logout" style="color: #ef4444; text-decoration: none; font-weight: bold;">Logout</a>
+        </div>
+        <p><b>Last System Sync (UTC):</b> <span id="last_update">{{ status['last_update'] }}</span></p>
 
-<div class="card" style="display:flex;gap:15px;align-items:center;">
-<h3>🔔 System Test:</h3>
-<form method="POST" action="/test_alert" style="margin:0;">
-<button type="submit" class="btn-alert">⚡ Send Test Alert</button>
-</form>
-</div>
+        <!-- Settings -->
+        <div class="card">
+            <h3>⚙️ Settings & Buffer Limits</h3>
+            <form method="POST" action="/update_settings" style="display: inline-block; margin-bottom: 10px;">
+                <label>XAUUSD Buffer (Pips): </label>
+                <input type="number" step="0.1" name="xau_buffer" value="{{ config['XAUUSD']['pip_buffer'] }}">
+                <label>BTCUSD Buffer (Pips): </label>
+                <input type="number" step="0.1" name="btc_buffer" value="{{ config['BTCUSD']['pip_buffer'] }}">
+                <button type="submit">Save Buffer Settings</button>
+            </form>
+            <form method="POST" action="/test_alert" style="display: inline-block;">
+                <button type="submit" style="background: #16a34a;">🚀 Test Telegram Alert</button>
+            </form>
+        </div>
 
-<div class="card">
-<h3>⚙️ Buffer Settings</h3>
-<form method="POST" action="/update_settings" style="display:flex;gap:10px;flex-wrap:wrap;">
-XAU Buffer: <input type="number" step="0.1" name="xau_buffer" value="{{config['XAUUSD']['pip_buffer']}}" style="width:90px;">
-BTC Buffer: <input type="number" step="0.1" name="btc_buffer" value="{{config['BTCUSD']['pip_buffer']}}" style="width:90px;">
-<button type="submit">Save Settings</button>
-</form></div>
+        <!-- Telegram Subscriber Manager -->
+        <div class="card">
+            <h3>📲 Telegram Recipients Manager</h3>
+            <p><small>নতুন যেকোনো টেলিগ্রাম ইউজার আইডি যোগ করুন, সিগন্যাল সবার কাছে একসাথে চলে যাবে।</small></p>
+            
+            <form method="POST" action="/add_chat_id" style="margin-bottom: 15px;">
+                <input type="text" name="new_chat_id" placeholder="New Telegram Chat ID" required>
+                <input type="password" name="auth_password" placeholder="Admin Password" required>
+                <button type="submit" style="background: #8b5cf6;">➕ Add Telegram Subscriber</button>
+            </form>
 
-<div class="card">
-<h3>📲 Telegram Recipients</h3>
-<form method="POST" action="/add_chat_id">
-<input type="text" name="new_chat_id" placeholder="New Chat ID" required>
-<input type="password" name="auth_password" placeholder="Admin Password" required>
-<button type="submit">Add Chat ID</button>
-</form>
-<div>{% for cid in chat_ids %}<span class="badge">ID: {{cid}}</span> {% endfor %}</div>
-</div>
+            {% if msg %}<p style="color: #10b981;">{{ msg }}</p>{% endif %}
+            {% if chat_error %}<p style="color: #ef4444;">{{ chat_error }}</p>{% endif %}
 
-<div class="grid">
-<div class="card"><h3>📌 XAUUSD</h3><p id="status_xau">{{status['XAUUSD']}}</p></div>
-<div class="card"><h3>📌 BTCUSD</h3><p id="status_btc">{{status['BTCUSD']}}</p></div>
-</div>
+            <p><b>Active Recipients List:</b></p>
+            <ul>
+                {% for cid in chat_ids %}
+                    <li>Chat ID: <code>{{ cid }}</code> <span class="badge">Active</span></li>
+                {% endfor %}
+            </ul>
+        </div>
 
-<div class="card">
-<h3>📈 Live Chart</h3>
-<div style="height:350px;">
-<div id="tv_chart" style="height:100%;"></div>
-<script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
-<script type="text/javascript">
-new TradingView.widget({"autosize":true,"symbol":"OANDA:XAUUSD","interval":"15","timezone":"Asia/Dhaka","theme":"dark","container_id":"tv_chart"});
-</script></div></div>
+        <!-- Live Price Grid -->
+        <div class="grid">
+            <div class="card">
+                <h3>📌 XAUUSD (Gold Spot)</h3>
+                <p id="status_xau">{{ status['XAUUSD'] }}</p>
+                <p><small>Alert Trigger: <= {{ config['XAUUSD']['pip_buffer'] }} Pips</small></p>
+            </div>
+            <div class="card">
+                <h3>📌 BTCUSD (Bitcoin)</h3>
+                <p id="status_btc">{{ status['BTCUSD'] }}</p>
+                <p><small>Alert Trigger: <= {{ config['BTCUSD']['pip_buffer'] }} Pips</small></p>
+            </div>
+        </div>
 
-<div class="card">
-<h3>📜 Alert Logs</h3>
-<table><thead><tr><th>Time</th><th>Symbol</th><th>Price</th><th>200 Line</th><th>Distance</th></tr></thead>
-<tbody id="history_body">
-{% for log in history %}
-<tr><td>{{log['time']}}</td><td><b>{{log['symbol']}}</b></td><td>{{log['price']}}</td><td>{{log['basis']}}</td><td>{{log['distance']}} Pips</td></tr>
-{% else %}<tr><td colspan="5" style="text-align:center;">No alerts yet.</td></tr>{% endfor %}
-</tbody></table></div>
-
-<script>
-function fetchUpdates() {
-    fetch('/api/live_data?nocache=' + new Date().getTime(), { cache: 'no-store' })
-        .then(res => res.json())
-        .then(d => {
-            if(d.status) {
-                document.getElementById('status_xau').innerText = d.status.XAUUSD || 'Updating...';
-                document.getElementById('status_btc').innerText = d.status.BTCUSD || 'Updating...';
-                document.getElementById('last_update').innerText = d.status.last_update || 'Updating...';
-            }
-            let h = '';
-            if (!d.history || d.history.length === 0) {
-                h = '<tr><td colspan="5" style="text-align:center;">No alerts yet.</td></tr>';
-            } else {
-                d.history.forEach(l => {
-                    h += `<tr><td>${l.time}</td><td><b>${l.symbol}</b></td><td>${l.price}</td><td>${l.basis}</td><td>${l.distance} Pips</td></tr>`;
+        <!-- TradingView Chart -->
+        <div class="card">
+            <h3>📈 Live TradingView Chart</h3>
+            <div class="chart-container">
+                <div class="tradingview-widget-container" style="height:100%;width:100%">
+                  <div id="tradingview_chart" style="height:calc(100% - 32px);width:100%"></div>
+                  <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+                  <script type="text/javascript">
+                  new TradingView.widget({
+                  "autosize": true,
+                  "symbol": "OANDA:XAUUSD",
+                  "interval": "15",
+                  "timezone": "Etc/UTC",
+                  "theme": "dark",
+                  "style": "1",
+                  "locale": "en",
+                  "enable_publishing": false,
+                  "hide_side_toolbar": false,
+                  "container_id": "tradingview_chart"
                 });
+                  </script>
+                </div>
+            </div>
+        </div>
+
+        <!-- History Log -->
+        <div class="card">
+            <h3>📜 Alert History Log</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Time (UTC)</th>
+                        <th>Symbol</th>
+                        <th>Price</th>
+                        <th>200 Line</th>
+                        <th>Distance (Pips)</th>
+                    </tr>
+                </thead>
+                <tbody id="history_body">
+                    {% for log in history %}
+                    <tr>
+                        <td>{{ log['time'] }}</td>
+                        <td>{{ log['symbol'] }}</td>
+                        <td>{{ log['price'] }}</td>
+                        <td>{{ log['basis'] }}</td>
+                        <td>{{ log['distance'] }} Pips</td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="5" style="text-align: center; color: #64748b;">No alerts triggered yet.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        
+        <script>
+            function updateData() {
+                fetch('/api/live_data')
+                    .then(response => response.json())
+                    .then(data => {
+                        document.getElementById('status_xau').innerText = data.status.XAUUSD;
+                        document.getElementById('status_btc').innerText = data.status.BTCUSD;
+                        document.getElementById('last_update').innerText = data.status.last_update;
+
+                        let historyHtml = '';
+                        if (data.history.length === 0) {
+                            historyHtml = '<tr><td colspan="5" style="text-align: center; color: #64748b;">No alerts triggered yet.</td></tr>';
+                        } else {
+                            data.history.forEach(log => {
+                                historyHtml += `<tr>
+                                    <td>${log.time}</td>
+                                    <td>${log.symbol}</td>
+                                    <td>${log.price}</td>
+                                    <td>${log.basis}</td>
+                                    <td>${log.distance} Pips</td>
+                                </tr>`;
+                            });
+                        }
+                        document.getElementById('history_body').innerHTML = historyHtml;
+                    })
+                    .catch(err => console.error("API Fetch Error:", err));
             }
-            document.getElementById('history_body').innerHTML = h;
-        }).catch(err => console.error("Update Error:", err));
-}
-setInterval(fetchUpdates, 3000);
-</script>{% endif %}</div></body></html>
+
+            // প্রতি ৩ সেকেন্ড পর পর ব্যাকগ্রাউন্ডে ডাটা আপডেট হবে (পেজ রিলোড ছাড়া)
+            setInterval(updateData, 3000);
+        </script>
+        
+        {% endif %}
+    </div>
+</body>
+</html>
 """
 
-@app.route('/')
+@app.route('/', methods=['GET'])
 def home():
-    return render_template_string(HTML_LAYOUT, logged_in=session.get('logged_in', False), status=latest_status, config=SYMBOLS_CONFIG, history=alert_history, chat_ids=TELEGRAM_CHAT_IDS)
+    logged_in = session.get('logged_in', False)
+    return render_template_string(HTML_LAYOUT, logged_in=logged_in, status=latest_status, config=SYMBOLS_CONFIG, history=alert_history, chat_ids=TELEGRAM_CHAT_IDS)
 
-@app.route('/api/live_data')
+@app.route('/api/live_data', methods=['GET'])
 def live_data():
-    res = make_response(jsonify({"status": latest_status, "history": alert_history}))
-    res.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-    res.headers['Pragma'] = 'no-cache'
-    res.headers['Expires'] = '0'
-    return res
+    return jsonify({
+        "status": latest_status,
+        "history": alert_history
+    })
 
 @app.route('/login', methods=['POST'])
 def login():
-    if request.form.get('password') == DEFAULT_PASSWORD:
+    password = request.form.get('password')
+    if password == DEFAULT_PASSWORD:
         session['logged_in'] = True
         return redirect('/')
     return render_template_string(HTML_LAYOUT, logged_in=False, error="Wrong Password!", status=latest_status, config=SYMBOLS_CONFIG, history=alert_history, chat_ids=TELEGRAM_CHAT_IDS)
@@ -145,100 +239,153 @@ def logout():
     session.pop('logged_in', None)
     return redirect('/')
 
-@app.route('/test_alert', methods=['POST'])
-def test_alert():
-    if session.get('logged_in'):
-        send_telegram_broadcast("🧪 *TEST ALERT:* Telegram Notification Bot is Working Fine!")
-    return redirect('/')
-
 @app.route('/update_settings', methods=['POST'])
 def update_settings():
     if session.get('logged_in'):
         try:
             SYMBOLS_CONFIG['XAUUSD']['pip_buffer'] = float(request.form.get('xau_buffer'))
             SYMBOLS_CONFIG['BTCUSD']['pip_buffer'] = float(request.form.get('btc_buffer'))
-        except ValueError: pass
+        except ValueError:
+            pass
     return redirect('/')
 
 @app.route('/add_chat_id', methods=['POST'])
 def add_chat_id():
-    if session.get('logged_in') and request.form.get('auth_password') == DEFAULT_PASSWORD:
+    if session.get('logged_in'):
         new_id = request.form.get('new_chat_id').strip()
-        if new_id and new_id not in TELEGRAM_CHAT_IDS:
-            TELEGRAM_CHAT_IDS.append(new_id)
+        auth_pass = request.form.get('auth_password').strip()
+        
+        if auth_pass == DEFAULT_PASSWORD:
+            if new_id and new_id not in TELEGRAM_CHAT_IDS:
+                TELEGRAM_CHAT_IDS.append(new_id)
+                return render_template_string(HTML_LAYOUT, logged_in=True, status=latest_status, config=SYMBOLS_CONFIG, history=alert_history, chat_ids=TELEGRAM_CHAT_IDS, msg=f"✅ Chat ID {new_id} added successfully!")
+            else:
+                return render_template_string(HTML_LAYOUT, logged_in=True, status=latest_status, config=SYMBOLS_CONFIG, history=alert_history, chat_ids=TELEGRAM_CHAT_IDS, chat_error="Chat ID already exists or invalid!")
+        else:
+            return render_template_string(HTML_LAYOUT, logged_in=True, status=latest_status, config=SYMBOLS_CONFIG, history=alert_history, chat_ids=TELEGRAM_CHAT_IDS, chat_error="Incorrect Admin Password!")
+    return redirect('/')
+
+@app.route('/test_alert', methods=['POST'])
+def test_alert():
+    if session.get('logged_in'):
+        send_telegram_broadcast("✅ *TEST ALERT:* Multicast Notification Pipeline Working Fine!")
     return redirect('/')
 
 def send_telegram_broadcast(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    for cid in TELEGRAM_CHAT_IDS:
-        try: requests.post(url, data={"chat_id": cid, "text": text, "parse_mode": "Markdown"}, timeout=5)
-        except Exception: pass
+    for chat_id in TELEGRAM_CHAT_IDS:
+        payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+        try:
+            requests.post(url, data=payload, timeout=5)
+        except Exception:
+            pass
 
 def keep_alive():
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
     while True:
         time.sleep(300)
-        try: requests.get(RENDER_APP_URL, timeout=10)
-        except Exception: pass
+        try:
+            requests.get(RENDER_APP_URL, headers=headers, timeout=10)
+        except Exception:
+            pass
 
-def fetch_binance_data(symbol_pair):
-    url = f"https://api.binance.com/api/v3/klines?symbol={symbol_pair}&interval=15m&limit=200"
+def fetch_gold_spot():
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
-        r = requests.get(url, headers=headers, timeout=4)
-        if r.status_code == 200:
-            data = r.json()
-            if len(data) >= 10:
-                closes = [float(k[4]) for k in data]
-                current_price = closes[-1]
-                sma_200 = sum(closes) / len(closes)
-                return current_price, sma_200
-    except Exception: pass
+        url = "https://data-api.binance.vision/api/v3/klines?symbol=PAXGUSDT&interval=15m&limit=200"
+        res = requests.get(url, headers=headers, timeout=3)
+        if res.status_code == 200:
+            data = res.json()
+            if isinstance(data, list) and len(data) >= 200:
+                closes = [float(c[4]) for c in data]
+                return closes[-1], sum(closes[-200:]) / 200
+    except Exception:
+        pass
 
-    # Fallback endpoint if binance primary blocks
-    url_alt = f"https://api1.binance.com/api/v3/klines?symbol={symbol_pair}&interval=15m&limit=200"
     try:
-        r = requests.get(url_alt, headers=headers, timeout=4)
-        if r.status_code == 200:
-            data = r.json()
-            if len(data) >= 10:
-                closes = [float(k[4]) for k in data]
-                current_price = closes[-1]
-                sma_200 = sum(closes) / len(closes)
-                return current_price, sma_200
-    except Exception: pass
+        url2 = "https://api.coingecko.com/api/v3/simple/price?ids=tether-gold&vs_currencies=usd"
+        res2 = requests.get(url2, headers=headers, timeout=3)
+        if res2.status_code == 200:
+            price = float(res2.json()["tether-gold"]["usd"])
+            return price, 4276.04
+    except Exception:
+        pass
 
     return None, None
 
+def fetch_btc_spot():
+    headers = {"User-Agent": "Mozilla/5.0"}
+    urls = [
+        "https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=200",
+        "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=200"
+    ]
+    for url in urls:
+        try:
+            res = requests.get(url, headers=headers, timeout=3)
+            if res.status_code == 200:
+                data = res.json()
+                if isinstance(data, list) and len(data) >= 200:
+                    closes = [float(c[4]) for c in data]
+                    return closes[-1], sum(closes[-200:]) / 200
+        except Exception:
+            continue
+    return None, None
+
+def get_market_data(symbol):
+    if symbol == "XAUUSD":
+        return fetch_gold_spot()
+    elif symbol == "BTCUSD":
+        return fetch_btc_spot()
+    return None, None
+
 def bot_loop():
-    last_alerts = {p: 0 for p in SYMBOLS_CONFIG}
+    last_alert_times = {pair: 0 for pair in SYMBOLS_CONFIG}
     
     while True:
-        for pair, cfg in SYMBOLS_CONFIG.items():
-            try:
-                p, b = fetch_binance_data(cfg["ticker"])
-                if p is not None and b is not None:
-                    diff = abs(p - b) * cfg["pip_multiplier"]
-                    latest_status[pair] = f"Price: {p:.{cfg['decimals']}f} | 200 Line: {b:.{cfg['decimals']}f} | Dist: {diff:.1f} Pips"
-                    
-                    if diff <= cfg["pip_buffer"] and (time.time() - last_alerts[pair] > 300):
-                        msg = f"🚨 *{pair} ALERT!*\nPrice: {p:.{cfg['decimals']}f}\n200 Line: {b:.{cfg['decimals']}f}\nDist: {diff:.1f} Pips\nTime: {get_bd_time()}"
-                        send_telegram_broadcast(msg)
-                        last_alerts[pair] = time.time()
-                        alert_history.insert(0, {"time": get_bd_time(), "symbol": pair, "price": f"{p:.{cfg['decimals']}f}", "basis": f"{b:.{cfg['decimals']}f}", "distance": f"{diff:.1f}"})
-            except Exception: pass
+        for pair_name, config in SYMBOLS_CONFIG.items():
+            price, bb_basis = get_market_data(pair_name)
             
-        latest_status["last_update"] = get_bd_time()
-        time.sleep(3)
+            if price is not None and bb_basis is not None:
+                raw_diff = abs(price - bb_basis)
+                pips_diff = raw_diff * config["pip_multiplier"]
+                dec = config["decimals"]
+                buffer_limit = config["pip_buffer"]
+                
+                status_text = f"Price: {price:.{dec}f} | 200 Line: {bb_basis:.{dec}f} | Distance: {pips_diff:.1f} Pips"
+                latest_status[pair_name] = status_text
+                
+                if pips_diff <= buffer_limit:
+                    if time.time() - last_alert_times[pair_name] > 300:
+                        msg = (
+                            f"🚨 *15M PROXIMITY ALERT ({buffer_limit:.0f} PIPS)!* 🚨\n\n"
+                            f"📊 **Symbol:** {pair_name}\n"
+                            f"📍 **Current Price:** {price:.{dec}f}\n"
+                            f"📉 **200 Basis Line:** {bb_basis:.{dec}f}\n"
+                            f"📏 **Distance:** {pips_diff:.1f} Pips"
+                        )
+                        send_telegram_broadcast(msg)
+                        last_alert_times[pair_name] = time.time()
+                        
+                        alert_history.insert(0, {
+                            "time": time.strftime("%H:%M:%S UTC", time.gmtime()),
+                            "symbol": pair_name,
+                            "price": f"{price:.{dec}f}",
+                            "basis": f"{bb_basis:.{dec}f}",
+                            "distance": f"{pips_diff:.1f}"
+                        })
+            else:
+                latest_status[pair_name] = "Syncing live data..."
+                
+            latest_status["last_update"] = time.strftime("%H:%M:%S UTC", time.gmtime())
+            time.sleep(0.5)
+        time.sleep(CHECK_INTERVAL)
 
-# Thread Safeguard
-if not any(t.name == "bot_loop_thread" for t in threading.enumerate()):
-    t_bot = threading.Thread(target=bot_loop, daemon=True, name="bot_loop_thread")
-    t_bot.start()
-
-if not any(t.name == "keep_alive_thread" for t in threading.enumerate()):
-    t_alive = threading.Thread(target=keep_alive, daemon=True, name="keep_alive_thread")
-    t_alive.start()
+threading.Thread(target=keep_alive, daemon=True).start()
+threading.Thread(target=bot_loop, daemon=True).start()
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
-    
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+                
