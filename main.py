@@ -18,8 +18,8 @@ SYMBOLS_CONFIG = {
 TELEGRAM_CHAT_IDS = ["8910581056"]
 
 latest_status = {
-    "XAUUSD": "Syncing XAUUSD...",
-    "BTCUSD": "Syncing BTCUSD..."
+    "XAUUSD": "Connecting Live Stream...",
+    "BTCUSD": "Connecting Live Stream..."
 }
 
 alert_history = []
@@ -177,7 +177,7 @@ HTML_LAYOUT = """
         
         <script>
             function updateData() {
-                fetch('/api/live_data?nocache=' + new Date().getTime(), { cache: 'no-store' })
+                fetch('/api/live_data?_nocache=' + new Date().getTime(), { cache: 'no-store' })
                     .then(response => response.json())
                     .then(data => {
                         if(data.status) {
@@ -292,76 +292,41 @@ def keep_alive():
         except Exception:
             pass
 
-def fetch_gold_spot_realtime():
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+def fetch_symbol_data(symbol):
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     
-    # 1st Source: Binance Futures XAUUSDT / PAXGUSDT Direct klines
-    try:
-        url = "https://fapi.binance.com/fapi/v1/klines?symbol=XAUUSDT&interval=15m&limit=200"
-        res = requests.get(url, headers=headers, timeout=3)
-        if res.status_code == 200:
-            data = res.json()
-            if isinstance(data, list) and len(data) >= 10:
-                closes = [float(c[4]) for c in data]
-                return closes[-1], sum(closes) / len(closes)
-    except Exception:
-        pass
+    if symbol == "XAUUSD":
+        endpoints = [
+            "https://fapi.binance.com/fapi/v1/klines?symbol=XAUUSDT&interval=15m&limit=200",
+            "https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=15m&limit=200",
+            "https://api1.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=15m&limit=200",
+            "https://api.kucoin.com/api/v1/market/candles?symbol=XAU-USDT&type=15min"
+        ]
+    else:
+        endpoints = [
+            "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=200",
+            "https://api1.binance.com/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=200",
+            "https://api2.binance.com/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=200",
+            "https://api.kucoin.com/api/v1/market/candles?symbol=BTC-USDT&type=15min"
+        ]
 
-    # 2nd Source: KuCoin XAUUSDT Spot
-    try:
-        url = "https://api.kucoin.com/api/v1/market/candles?symbol=XAU-USDT&type=15min"
-        res = requests.get(url, headers=headers, timeout=3)
-        if res.status_code == 200:
-            data = res.json().get('data', [])
-            if len(data) >= 10:
-                closes = [float(c[2]) for c in data[:200]]
-                return closes[0], sum(closes) / len(closes)
-    except Exception:
-        pass
-
-    # 3rd Source: Yahoo Finance Gold Spot (GC=F)
-    try:
-        url = "https://query1.finance.yahoo.com/v8/finance/chart/GC=F?range=5d&interval=15m"
-        res = requests.get(url, headers=headers, timeout=3)
-        if res.status_code == 200:
-            result = res.json()['chart']['result'][0]
-            closes = [c for c in result['indicators']['quote'][0]['close'] if c is not None]
-            if len(closes) >= 10:
-                recent_closes = closes[-200:]
-                return recent_closes[-1], sum(recent_closes) / len(recent_closes)
-    except Exception:
-        pass
-
-    return None, None
-
-def fetch_btc_spot_realtime():
-    headers = {"User-Agent": "Mozilla/5.0"}
-    urls = [
-        "https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=200",
-        "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=200",
-        "https://api.kucoin.com/api/v1/market/candles?symbol=BTC-USDT&type=15min"
-    ]
-    for url in urls:
+    for url in endpoints:
         try:
             res = requests.get(url, headers=headers, timeout=3)
             if res.status_code == 200:
                 data = res.json()
                 if 'kucoin' in url and 'data' in data:
                     klines = data['data']
-                    closes = [float(c[2]) for c in klines[:200]]
-                    return closes[0], sum(closes) / len(closes)
-                elif isinstance(data, list) and len(data) >= 10:
+                    if len(klines) >= 200:
+                        closes = [float(c[2]) for c in klines[:200]]
+                        closes.reverse()
+                        return closes[-1], sum(closes[-200:]) / 200
+                elif isinstance(data, list) and len(data) >= 200:
                     closes = [float(c[4]) for c in data]
-                    return closes[-1], sum(closes) / len(closes)
+                    return closes[-1], sum(closes[-200:]) / 200
         except Exception:
             continue
-    return None, None
 
-def get_market_data(symbol):
-    if symbol == "XAUUSD":
-        return fetch_gold_spot_realtime()
-    elif symbol == "BTCUSD":
-        return fetch_btc_spot_realtime()
     return None, None
 
 def bot_loop():
@@ -370,7 +335,7 @@ def bot_loop():
     while True:
         for pair_name, config in SYMBOLS_CONFIG.items():
             try:
-                price, bb_basis = get_market_data(pair_name)
+                price, bb_basis = fetch_symbol_data(pair_name)
                 
                 if price is not None and bb_basis is not None:
                     raw_diff = abs(price - bb_basis)
