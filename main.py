@@ -18,8 +18,8 @@ SYMBOLS_CONFIG = {
 TELEGRAM_CHAT_IDS = ["8910581056"]
 
 latest_status = {
-    "XAUUSD": "Connecting Live Stream...",
-    "BTCUSD": "Connecting Live Stream..."
+    "XAUUSD": "Fetching Realtime Data...",
+    "BTCUSD": "Fetching Realtime Data..."
 }
 
 alert_history = []
@@ -292,41 +292,69 @@ def keep_alive():
         except Exception:
             pass
 
+def fetch_gold_data():
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    # Source 1: Yahoo Finance API (No IP restrictions)
+    try:
+        url = "https://query1.finance.yahoo.com/v8/finance/chart/GC=F?range=5d&interval=15m"
+        res = requests.get(url, headers=headers, timeout=4)
+        if res.status_code == 200:
+            result = res.json()['chart']['result'][0]
+            closes = [c for c in result['indicators']['quote'][0]['close'] if c is not None]
+            if len(closes) >= 200:
+                recent = closes[-200:]
+                return recent[-1], sum(recent) / 200
+    except Exception:
+        pass
+
+    # Source 2: CoinGecko Pax Gold (Spot Equivalent)
+    try:
+        url = "https://api.coingecko.com/api/v3/coins/paxos-gold/market_chart?vs_currency=usd&days=2"
+        res = requests.get(url, headers=headers, timeout=4)
+        if res.status_code == 200:
+            prices = [p[1] for p in res.json().get('prices', [])]
+            if len(prices) >= 200:
+                recent = prices[-200:]
+                return recent[-1], sum(recent) / 200
+    except Exception:
+        pass
+
+    return None, None
+
+def fetch_btc_data():
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    # Source 1: Yahoo Finance BTC-USD
+    try:
+        url = "https://query1.finance.yahoo.com/v8/finance/chart/BTC-USD?range=5d&interval=15m"
+        res = requests.get(url, headers=headers, timeout=4)
+        if res.status_code == 200:
+            result = res.json()['chart']['result'][0]
+            closes = [c for c in result['indicators']['quote'][0]['close'] if c is not None]
+            if len(closes) >= 200:
+                recent = closes[-200:]
+                return recent[-1], sum(recent) / 200
+    except Exception:
+        pass
+
+    # Source 2: CoinGecko BTC
+    try:
+        url = "https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=2"
+        res = requests.get(url, headers=headers, timeout=4)
+        if res.status_code == 200:
+            prices = [p[1] for p in res.json().get('prices', [])]
+            if len(prices) >= 200:
+                recent = prices[-200:]
+                return recent[-1], sum(recent) / 200
+    except Exception:
+        pass
+
+    return None, None
+
 def fetch_symbol_data(symbol):
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-    
     if symbol == "XAUUSD":
-        endpoints = [
-            "https://fapi.binance.com/fapi/v1/klines?symbol=XAUUSDT&interval=15m&limit=200",
-            "https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=15m&limit=200",
-            "https://api1.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=15m&limit=200",
-            "https://api.kucoin.com/api/v1/market/candles?symbol=XAU-USDT&type=15min"
-        ]
-    else:
-        endpoints = [
-            "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=200",
-            "https://api1.binance.com/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=200",
-            "https://api2.binance.com/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=200",
-            "https://api.kucoin.com/api/v1/market/candles?symbol=BTC-USDT&type=15min"
-        ]
-
-    for url in endpoints:
-        try:
-            res = requests.get(url, headers=headers, timeout=3)
-            if res.status_code == 200:
-                data = res.json()
-                if 'kucoin' in url and 'data' in data:
-                    klines = data['data']
-                    if len(klines) >= 200:
-                        closes = [float(c[2]) for c in klines[:200]]
-                        closes.reverse()
-                        return closes[-1], sum(closes[-200:]) / 200
-                elif isinstance(data, list) and len(data) >= 200:
-                    closes = [float(c[4]) for c in data]
-                    return closes[-1], sum(closes[-200:]) / 200
-        except Exception:
-            continue
-
+        return fetch_gold_data()
+    elif symbol == "BTCUSD":
+        return fetch_btc_data()
     return None, None
 
 def bot_loop():
@@ -379,4 +407,3 @@ if not any(t.name == "keep_alive_thread" for t in threading.enumerate()):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-            
