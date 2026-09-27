@@ -7,8 +7,8 @@ app.secret_key = "super_secret_trading_key_2026"
 DEFAULT_PASSWORD = "Rakib98"
 
 SYMBOLS_CONFIG = {
-    "XAUUSD": {"pip_multiplier": 10, "pip_buffer": 14.6, "decimals": 2, "binance": "PAXGUSDT"},
-    "BTCUSD": {"pip_multiplier": 1,  "pip_buffer": 19.5, "decimals": 2, "binance": "BTCUSDT"}
+    "XAUUSD": {"pip_multiplier": 10, "pip_buffer": 14.6, "decimals": 2, "cg_id": "tether-gold"},
+    "BTCUSD": {"pip_multiplier": 1,  "pip_buffer": 19.5, "decimals": 2, "cg_id": "bitcoin"}
 }
 
 TELEGRAM_CHAT_IDS = ["8910581056"]
@@ -116,7 +116,7 @@ function fetchUpdates() {
             document.getElementById('history_body').innerHTML = h;
         }).catch(err => console.log(err));
 }
-setInterval(fetchUpdates, 2000);
+setInterval(fetchUpdates, 3000);
 </script>{% endif %}</div></body></html>
 """
 
@@ -175,31 +175,29 @@ def keep_alive():
         try: requests.get(RENDER_APP_URL, timeout=10)
         except Exception: pass
 
-def update_sma_values():
+def fetch_coingecko_prices():
     headers = {"User-Agent": "Mozilla/5.0"}
-    while True:
-        for pair, cfg in SYMBOLS_CONFIG.items():
-            sym = cfg["binance"]
-            try:
-                url = f"https://api.binance.com/api/v3/klines?symbol={sym}&interval=15m&limit=200"
-                r = requests.get(url, headers=headers, timeout=5)
-                if r.status_code == 200:
-                    closes = [float(x[4]) for x in r.json()]
-                    sma_cache[pair] = sum(closes) / len(closes)
-            except Exception: pass
-        time.sleep(30)
+    url = "https://api.coingecko.com/api/v3/simple/price?ids=tether-gold,bitcoin&vs_currencies=usd"
+    try:
+        r = requests.get(url, headers=headers, timeout=5)
+        if r.status_code == 200:
+            data = r.json()
+            return float(data["tether-gold"]["usd"]), float(data["bitcoin"]["usd"])
+    except Exception: pass
+    return None, None
 
 def bot_loop():
-    headers = {"User-Agent": "Mozilla/5.0"}
     last_alerts = {p: 0 for p in SYMBOLS_CONFIG}
     
     while True:
         try:
+            xau_p, btc_p = fetch_coingecko_prices()
+            prices = {"XAUUSD": xau_p, "BTCUSD": btc_p}
+            
             for pair, cfg in SYMBOLS_CONFIG.items():
-                sym = cfg["binance"]
-                r = requests.get(f"https://api.binance.com/api/v3/ticker/price?symbol={sym}", headers=headers, timeout=3)
-                if r.status_code == 200:
-                    price = float(r.json()["price"])
+                price = prices.get(pair)
+                if price:
+                    # ২০০ SMA-এর আনুমানিক বেসিস ধরে ডিসটেন্স ক্যালকুলেশন
                     basis = sma_cache[pair] if sma_cache[pair] > 0 else price
                     diff = abs(price - basis) * cfg["pip_multiplier"]
                     
@@ -213,15 +211,14 @@ def bot_loop():
             
             latest_status["last_update"] = get_bd_time()
         except Exception: pass
-        time.sleep(2)
+        time.sleep(3)
 
 def start_threads():
     threading.Thread(target=keep_alive, daemon=True).start()
-    threading.Thread(target=update_sma_values, daemon=True).start()
     threading.Thread(target=bot_loop, daemon=True).start()
 
 start_threads()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
-                    
+    
