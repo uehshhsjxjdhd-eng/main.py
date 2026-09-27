@@ -1,18 +1,18 @@
 import os, time, threading, requests
 from datetime import datetime, timedelta, timezone
-from flask import Flask, request, session, redirect, render_template_string, jsonify
+from flask import Flask, request, session, redirect, render_template_string, jsonify, make_response
 
 app = Flask(__name__)
 app.secret_key = "super_secret_trading_key_2026"
 DEFAULT_PASSWORD = "Rakib98"
 
 SYMBOLS_CONFIG = {
-    "XAUUSD": {"pip_multiplier": 10, "pip_buffer": 14.6, "decimals": 2, "kucoin": "PAXG-USDT"},
-    "BTCUSD": {"pip_multiplier": 1,  "pip_buffer": 19.5, "decimals": 2, "kucoin": "BTC-USDT"}
+    "XAUUSD": {"pip_multiplier": 10, "pip_buffer": 14.6, "decimals": 2, "ticker": "PAXGUSDT"},
+    "BTCUSD": {"pip_multiplier": 1,  "pip_buffer": 19.5, "decimals": 2, "ticker": "BTCUSDT"}
 }
 
 TELEGRAM_CHAT_IDS = ["8910581056"]
-latest_status = {"XAUUSD": "Fetching...", "BTCUSD": "Fetching...", "last_update": "Initializing..."}
+latest_status = {"XAUUSD": "Initializing...", "BTCUSD": "Initializing...", "last_update": "Initializing..."}
 alert_history = []
 
 TELEGRAM_BOT_TOKEN = "8642092487:AAEIHzt94t8xNMfn6kyWZP2FgdRqprPJWV8"
@@ -98,12 +98,14 @@ new TradingView.widget({"autosize":true,"symbol":"OANDA:XAUUSD","interval":"15",
 
 <script>
 function fetchUpdates() {
-    fetch('/api/live_data?_t=' + Date.now())
+    fetch('/api/live_data?nocache=' + new Date().getTime(), { cache: 'no-store' })
         .then(res => res.json())
         .then(d => {
-            document.getElementById('status_xau').innerText = d.status.XAUUSD;
-            document.getElementById('status_btc').innerText = d.status.BTCUSD;
-            document.getElementById('last_update').innerText = d.status.last_update;
+            if(d.status) {
+                document.getElementById('status_xau').innerText = d.status.XAUUSD || 'Updating...';
+                document.getElementById('status_btc').innerText = d.status.BTCUSD || 'Updating...';
+                document.getElementById('last_update').innerText = d.status.last_update || 'Updating...';
+            }
             let h = '';
             if (!d.history || d.history.length === 0) {
                 h = '<tr><td colspan="5" style="text-align:center;">No alerts yet.</td></tr>';
@@ -113,7 +115,7 @@ function fetchUpdates() {
                 });
             }
             document.getElementById('history_body').innerHTML = h;
-        }).catch(err => console.log(err));
+        }).catch(err => console.error("Update Error:", err));
 }
 setInterval(fetchUpdates, 3000);
 </script>{% endif %}</div></body></html>
@@ -125,7 +127,11 @@ def home():
 
 @app.route('/api/live_data')
 def live_data():
-    return jsonify({"status": latest_status, "history": alert_history})
+    res = make_response(jsonify({"status": latest_status, "history": alert_history}))
+    res.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    res.headers['Pragma'] = 'no-cache'
+    res.headers['Expires'] = '0'
+    return res
 
 @app.route('/login', methods=['POST'])
 def login():
@@ -174,32 +180,43 @@ def keep_alive():
         try: requests.get(RENDER_APP_URL, timeout=10)
         except Exception: pass
 
-def fetch_kucoin_data(symbol_pair):
+def fetch_binance_data(symbol_pair):
+    url = f"https://api.binance.com/api/v3/klines?symbol={symbol_pair}&interval=15m&limit=200"
     headers = {"User-Agent": "Mozilla/5.0"}
-    url = f"https://api.kucoin.com/api/v1/market/candles?symbol={symbol_pair}&type=15min"
     try:
-        r = requests.get(url, headers=headers, timeout=5)
+        r = requests.get(url, headers=headers, timeout=4)
         if r.status_code == 200:
-            data = r.json().get("data", [])
-            if len(data) > 0:
-                closes = [float(k[2]) for k in data] # KuCoin-এ k[2] হচ্ছে Close price
-                current_price = closes[0]
-                
-                # ২০-২০০ ক্যান্ডেল ডাটা নিয়ে SMA হিসেব
-                sma_count = min(len(closes), 200)
-                sma_200 = sum(closes[:sma_count]) / sma_count
+            data = r.json()
+            if len(data) >= 10:
+                closes = [float(k[4]) for k in data]
+                current_price = closes[-1]
+                sma_200 = sum(closes) / len(closes)
                 return current_price, sma_200
     except Exception: pass
+
+    # Fallback endpoint if binance primary blocks
+    url_alt = f"https://api1.binance.com/api/v3/klines?symbol={symbol_pair}&interval=15m&limit=200"
+    try:
+        r = requests.get(url_alt, headers=headers, timeout=4)
+        if r.status_code == 200:
+            data = r.json()
+            if len(data) >= 10:
+                closes = [float(k[4]) for k in data]
+                current_price = closes[-1]
+                sma_200 = sum(closes) / len(closes)
+                return current_price, sma_200
+    except Exception: pass
+
     return None, None
 
 def bot_loop():
     last_alerts = {p: 0 for p in SYMBOLS_CONFIG}
     
     while True:
-        try:
-            for pair, cfg in SYMBOLS_CONFIG.items():
-                p, b = fetch_kucoin_data(cfg["kucoin"])
-                if p and b:
+        for pair, cfg in SYMBOLS_CONFIG.items():
+            try:
+                p, b = fetch_binance_data(cfg["ticker"])
+                if p is not None and b is not None:
                     diff = abs(p - b) * cfg["pip_multiplier"]
                     latest_status[pair] = f"Price: {p:.{cfg['decimals']}f} | 200 Line: {b:.{cfg['decimals']}f} | Dist: {diff:.1f} Pips"
                     
@@ -208,16 +225,19 @@ def bot_loop():
                         send_telegram_broadcast(msg)
                         last_alerts[pair] = time.time()
                         alert_history.insert(0, {"time": get_bd_time(), "symbol": pair, "price": f"{p:.{cfg['decimals']}f}", "basis": f"{b:.{cfg['decimals']}f}", "distance": f"{diff:.1f}"})
+            except Exception: pass
             
-            latest_status["last_update"] = get_bd_time()
-        except Exception: pass
+        latest_status["last_update"] = get_bd_time()
         time.sleep(3)
 
-def start_threads():
-    threading.Thread(target=keep_alive, daemon=True).start()
-    threading.Thread(target=bot_loop, daemon=True).start()
+# Thread Safeguard
+if not any(t.name == "bot_loop_thread" for t in threading.enumerate()):
+    t_bot = threading.Thread(target=bot_loop, daemon=True, name="bot_loop_thread")
+    t_bot.start()
 
-start_threads()
+if not any(t.name == "keep_alive_thread" for t in threading.enumerate()):
+    t_alive = threading.Thread(target=keep_alive, daemon=True, name="keep_alive_thread")
+    t_alive.start()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
