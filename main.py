@@ -16,11 +16,15 @@ SYMBOLS_CONFIG = {
 
 TELEGRAM_CHAT_IDS = ["8910581056"]
 TELEGRAM_BOT_TOKEN = "8642092487:AAEIHzt94t8xNMfn6kyWZP2FgdRqprPJWV8"
-RENDER_APP_URL = "https://bot-y282.onrender.com"
 
 latest_status = {
-    "XAUUSD": "Waiting for TradingView Signal...",
-    "BTCUSD": "Waiting for TradingView Signal..."
+    "XAUUSD": "Waiting for MT4 Live Signal...",
+    "BTCUSD": "Waiting for MT4 Live Signal..."
+}
+
+last_alert_times = {
+    "XAUUSD": 0,
+    "BTCUSD": 0
 }
 
 alert_history = []
@@ -47,7 +51,6 @@ HTML_LAYOUT = """
         th, td { border: 1px solid #334155; padding: 8px; text-align: left; font-size: 14px; }
         th { background: #334155; color: #f8fafc; }
         .login-box { max-width: 380px; margin: 80px auto; padding: 25px; text-align: center; }
-        .chart-container { height: 380px; margin-top: 10px; }
         .badge { background: #0284c7; color: white; padding: 3px 8px; border-radius: 4px; font-size: 12px; }
     </style>
 </head>
@@ -66,7 +69,7 @@ HTML_LAYOUT = """
         {% else %}
         
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-            <h2 style="margin:0;">🤖 TradingView Webhook Engine</h2>
+            <h2 style="margin:0;">🤖 MT4 Proximity Live Terminal</h2>
             <a href="/logout" style="color: #ef4444; text-decoration: none; font-weight: bold;">Logout</a>
         </div>
 
@@ -82,16 +85,18 @@ HTML_LAYOUT = """
             <div class="card">
                 <h3>📌 XAUUSD (Gold Spot)</h3>
                 <p id="status_xau" style="font-size: 15px; font-weight: bold; color: #f8fafc;">{{ status['XAUUSD'] }}</p>
+                <small>Alert Target: <= 14.6 Pips</small>
             </div>
             <div class="card">
                 <h3>📌 BTCUSD (Bitcoin)</h3>
                 <p id="status_btc" style="font-size: 15px; font-weight: bold; color: #f8fafc;">{{ status['BTCUSD'] }}</p>
+                <small>Alert Target: <= 19.5 Pips</small>
             </div>
         </div>
 
         <!-- History Log -->
         <div class="card">
-            <h3>📜 Live Alert Log</h3>
+            <h3>📜 Telegram Alert History Log</h3>
             <table>
                 <thead>
                     <tr>
@@ -113,7 +118,7 @@ HTML_LAYOUT = """
                     </tr>
                     {% else %}
                     <tr>
-                        <td colspan="5" style="text-align: center; color: #64748b;">No alerts received from TradingView yet.</td>
+                        <td colspan="5" style="text-align: center; color: #64748b;">No alerts triggered yet.</td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -132,7 +137,7 @@ HTML_LAYOUT = """
 
                         let historyHtml = '';
                         if (!data.history || data.history.length === 0) {
-                            historyHtml = '<tr><td colspan="5" style="text-align: center; color: #64748b;">No alerts received from TradingView yet.</td></tr>';
+                            historyHtml = '<tr><td colspan="5" style="text-align: center; color: #64748b;">No alerts triggered yet.</td></tr>';
                         } else {
                             data.history.forEach(log => {
                                 historyHtml += `<tr>
@@ -149,7 +154,7 @@ HTML_LAYOUT = """
                     .catch(err => console.error("API Fetch Error:", err));
             }
 
-            setInterval(updateData, 3000);
+            setInterval(updateData, 2000);
         </script>
         {% endif %}
     </div>
@@ -185,42 +190,54 @@ def logout():
 @app.route('/test_alert', methods=['POST'])
 def test_alert():
     if session.get('logged_in'):
-        send_telegram_broadcast("✅ *TEST ALERT:* TradingView Webhook Engine Active!")
+        send_telegram_broadcast("✅ *TEST ALERT:* MT4 Live Webhook Engine Active!")
     return redirect('/')
 
-# TRADINGVIEW WEBHOOK RECEIVER
+# MT4 WEBHOOK RECEIVER
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
         data = request.get_json(force=True)
         if not data:
-            return jsonify({"status": "error", "message": "No JSON payload"}), 400
+            return jsonify({"status": "error"}), 400
 
         symbol = data.get("symbol", "UNKNOWN")
+        if "BTC" in symbol:
+            symbol = "BTCUSD"
+        elif "XAU" in symbol or "GOLD" in symbol:
+            symbol = "XAUUSD"
+
         price = float(data.get("price", 0))
         basis = float(data.get("basis", 0))
         distance = float(data.get("distance", 0))
 
+        # ড্যাশবোর্ডে সরাসরি রিয়েল-টাইম টেক্সট আপডেট
         status_text = f"Price: {price:.2f} | 200 Line: {basis:.2f} | Distance: {distance:.1f} Pips"
         latest_status[symbol] = status_text
 
-        # Telegram Alert Message
-        msg = (
-            f"🚨 *TRADINGVIEW PROXIMITY ALERT!* 🚨\n\n"
-            f"📊 **Symbol:** {symbol}\n"
-            f"📍 **Current Price:** {price:.2f}\n"
-            f"📉 **200 Basis Line:** {basis:.2f}\n"
-            f"📏 **Distance:** {distance:.1f} Pips"
-        )
-        send_telegram_broadcast(msg)
+        # বাফার চেক করে টেলিগ্রামে অ্যালার্ট
+        limit_pips = SYMBOLS_CONFIG.get(symbol, {}).get("pip_buffer", 15.0)
+        
+        if distance <= limit_pips:
+            # ৫ মিনিটের কুলডাউন যেন বারবার স্প্যাম না হয়
+            if time.time() - last_alert_times.get(symbol, 0) > 300:
+                msg = (
+                    f"🚨 *MT4 PROXIMITY ALERT ({limit_pips} PIPS)!* 🚨\n\n"
+                    f"📊 **Symbol:** {symbol}\n"
+                    f"📍 **Current Price:** {price:.2f}\n"
+                    f"📉 **200 Basis Line:** {basis:.2f}\n"
+                    f"📏 **Distance:** {distance:.1f} Pips"
+                )
+                send_telegram_broadcast(msg)
+                last_alert_times[symbol] = time.time()
 
-        alert_history.insert(0, {
-            "time": get_bd_time(),
-            "symbol": symbol,
-            "price": f"{price:.2f}",
-            "basis": f"{basis:.2f}",
-            "distance": f"{distance:.1f}"
-        })
+                alert_history.insert(0, {
+                    "time": get_bd_time(),
+                    "symbol": symbol,
+                    "price": f"{price:.2f}",
+                    "basis": f"{basis:.2f}",
+                    "distance": f"{distance:.1f}"
+                })
 
         return jsonify({"status": "success"}), 200
 
