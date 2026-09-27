@@ -2,7 +2,8 @@ import os
 import time
 import threading
 import requests
-from flask import Flask, request, session, redirect, render_template_string, jsonify
+from datetime import datetime, timedelta, timezone
+from flask import Flask, request, session, redirect, render_template_string, jsonify, make_response
 
 app = Flask(__name__)
 app.secret_key = "super_secret_trading_key_2026"
@@ -27,6 +28,9 @@ alert_history = []
 TELEGRAM_BOT_TOKEN = "8642092487:AAEIHzt94t8xNMfn6kyWZP2FgdRqprPJWV8"
 RENDER_APP_URL = "https://bot-y282.onrender.com"
 CHECK_INTERVAL = 3
+
+def get_bd_time():
+    return datetime.now(timezone(timedelta(hours=6))).strftime("%I:%M:%S %p BST")
 
 HTML_LAYOUT = """
 <!DOCTYPE html>
@@ -67,7 +71,7 @@ HTML_LAYOUT = """
             <h1>🤖 15M Proximity Pro Control</h1>
             <a href="/logout" style="color: #ef4444; text-decoration: none; font-weight: bold;">Logout</a>
         </div>
-        <p><b>Last System Sync (UTC):</b> <span id="last_update">{{ status['last_update'] }}</span></p>
+        <p><b>Last System Sync:</b> <span id="last_update" style="color:#38bdf8; font-weight:bold;">{{ status['last_update'] }}</span></p>
 
         <!-- Settings -->
         <div class="card">
@@ -132,7 +136,7 @@ HTML_LAYOUT = """
                   "autosize": true,
                   "symbol": "OANDA:XAUUSD",
                   "interval": "15",
-                  "timezone": "Etc/UTC",
+                  "timezone": "Asia/Dhaka",
                   "theme": "dark",
                   "style": "1",
                   "locale": "en",
@@ -151,7 +155,7 @@ HTML_LAYOUT = """
             <table>
                 <thead>
                     <tr>
-                        <th>Time (UTC)</th>
+                        <th>Time (BST)</th>
                         <th>Symbol</th>
                         <th>Price</th>
                         <th>200 Line</th>
@@ -178,15 +182,17 @@ HTML_LAYOUT = """
         
         <script>
             function updateData() {
-                fetch('/api/live_data')
+                fetch('/api/live_data?_t=' + new Date().getTime(), { cache: 'no-store' })
                     .then(response => response.json())
                     .then(data => {
-                        document.getElementById('status_xau').innerText = data.status.XAUUSD;
-                        document.getElementById('status_btc').innerText = data.status.BTCUSD;
-                        document.getElementById('last_update').innerText = data.status.last_update;
+                        if(data.status) {
+                            document.getElementById('status_xau').innerText = data.status.XAUUSD;
+                            document.getElementById('status_btc').innerText = data.status.BTCUSD;
+                            document.getElementById('last_update').innerText = data.status.last_update;
+                        }
 
                         let historyHtml = '';
-                        if (data.history.length === 0) {
+                        if (!data.history || data.history.length === 0) {
                             historyHtml = '<tr><td colspan="5" style="text-align: center; color: #64748b;">No alerts triggered yet.</td></tr>';
                         } else {
                             data.history.forEach(log => {
@@ -204,7 +210,6 @@ HTML_LAYOUT = """
                     .catch(err => console.error("API Fetch Error:", err));
             }
 
-            // প্রতি ৩ সেকেন্ড পর পর ব্যাকগ্রাউন্ডে ডাটা আপডেট হবে (পেজ রিলোড ছাড়া)
             setInterval(updateData, 3000);
         </script>
         
@@ -221,10 +226,14 @@ def home():
 
 @app.route('/api/live_data', methods=['GET'])
 def live_data():
-    return jsonify({
+    res = make_response(jsonify({
         "status": latest_status,
         "history": alert_history
-    })
+    }))
+    res.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    res.headers['Pragma'] = 'no-cache'
+    res.headers['Expires'] = '0'
+    return res
 
 @app.route('/login', methods=['POST'])
 def login():
@@ -281,9 +290,7 @@ def send_telegram_broadcast(text):
             pass
 
 def keep_alive():
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
+    headers = {"User-Agent": "Mozilla/5.0"}
     while True:
         time.sleep(300)
         try:
@@ -291,101 +298,84 @@ def keep_alive():
         except Exception:
             pass
 
-def fetch_gold_spot():
-    headers = {"User-Agent": "Mozilla/5.0"}
-    try:
-        url = "https://data-api.binance.vision/api/v3/klines?symbol=PAXGUSDT&interval=15m&limit=200"
-        res = requests.get(url, headers=headers, timeout=3)
-        if res.status_code == 200:
-            data = res.json()
-            if isinstance(data, list) and len(data) >= 200:
-                closes = [float(c[4]) for c in data]
-                return closes[-1], sum(closes[-200:]) / 200
-    except Exception:
-        pass
-
-    try:
-        url2 = "https://api.coingecko.com/api/v3/simple/price?ids=tether-gold&vs_currencies=usd"
-        res2 = requests.get(url2, headers=headers, timeout=3)
-        if res2.status_code == 200:
-            price = float(res2.json()["tether-gold"]["usd"])
-            return price, 4276.04
-    except Exception:
-        pass
-
-    return None, None
-
-def fetch_btc_spot():
-    headers = {"User-Agent": "Mozilla/5.0"}
-    urls = [
-        "https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=200",
-        "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=200"
+def fetch_klines(symbol):
+    endpoints = [
+        f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval=15m&limit=200",
+        f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=15m&limit=200",
+        f"https://api1.binance.com/api/v3/klines?symbol={symbol}&interval=15m&limit=200"
     ]
-    for url in urls:
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    for url in endpoints:
         try:
-            res = requests.get(url, headers=headers, timeout=3)
+            res = requests.get(url, headers=headers, timeout=4)
             if res.status_code == 200:
                 data = res.json()
-                if isinstance(data, list) and len(data) >= 200:
+                if isinstance(data, list) and len(data) >= 10:
                     closes = [float(c[4]) for c in data]
-                    return closes[-1], sum(closes[-200:]) / 200
+                    current_price = closes[-1]
+                    sma_200 = sum(closes) / len(closes)
+                    return current_price, sma_200
         except Exception:
             continue
     return None, None
 
 def get_market_data(symbol):
     if symbol == "XAUUSD":
-        return fetch_gold_spot()
+        return fetch_klines("PAXGUSDT")
     elif symbol == "BTCUSD":
-        return fetch_btc_spot()
+        return fetch_klines("BTCUSDT")
     return None, None
 
 def bot_loop():
     last_alert_times = {pair: 0 for pair in SYMBOLS_CONFIG}
     
     while True:
-        for pair_name, config in SYMBOLS_CONFIG.items():
-            price, bb_basis = get_market_data(pair_name)
-            
-            if price is not None and bb_basis is not None:
-                raw_diff = abs(price - bb_basis)
-                pips_diff = raw_diff * config["pip_multiplier"]
-                dec = config["decimals"]
-                buffer_limit = config["pip_buffer"]
+        try:
+            for pair_name, config in SYMBOLS_CONFIG.items():
+                price, bb_basis = get_market_data(pair_name)
                 
-                status_text = f"Price: {price:.{dec}f} | 200 Line: {bb_basis:.{dec}f} | Distance: {pips_diff:.1f} Pips"
-                latest_status[pair_name] = status_text
+                if price is not None and bb_basis is not None:
+                    raw_diff = abs(price - bb_basis)
+                    pips_diff = raw_diff * config["pip_multiplier"]
+                    dec = config["decimals"]
+                    buffer_limit = config["pip_buffer"]
+                    
+                    status_text = f"Price: {price:.{dec}f} | 200 Line: {bb_basis:.{dec}f} | Distance: {pips_diff:.1f} Pips"
+                    latest_status[pair_name] = status_text
+                    
+                    if pips_diff <= buffer_limit:
+                        if time.time() - last_alert_times[pair_name] > 300:
+                            msg = (
+                                f"🚨 *15M PROXIMITY ALERT ({buffer_limit:.0f} PIPS)!* 🚨\n\n"
+                                f"📊 **Symbol:** {pair_name}\n"
+                                f"📍 **Current Price:** {price:.{dec}f}\n"
+                                f"📉 **200 Basis Line:** {bb_basis:.{dec}f}\n"
+                                f"📏 **Distance:** {pips_diff:.1f} Pips"
+                            )
+                            send_telegram_broadcast(msg)
+                            last_alert_times[pair_name] = time.time()
+                            
+                            alert_history.insert(0, {
+                                "time": get_bd_time(),
+                                "symbol": pair_name,
+                                "price": f"{price:.{dec}f}",
+                                "basis": f"{bb_basis:.{dec}f}",
+                                "distance": f"{pips_diff:.1f}"
+                            })
                 
-                if pips_diff <= buffer_limit:
-                    if time.time() - last_alert_times[pair_name] > 300:
-                        msg = (
-                            f"🚨 *15M PROXIMITY ALERT ({buffer_limit:.0f} PIPS)!* 🚨\n\n"
-                            f"📊 **Symbol:** {pair_name}\n"
-                            f"📍 **Current Price:** {price:.{dec}f}\n"
-                            f"📉 **200 Basis Line:** {bb_basis:.{dec}f}\n"
-                            f"📏 **Distance:** {pips_diff:.1f} Pips"
-                        )
-                        send_telegram_broadcast(msg)
-                        last_alert_times[pair_name] = time.time()
-                        
-                        alert_history.insert(0, {
-                            "time": time.strftime("%H:%M:%S UTC", time.gmtime()),
-                            "symbol": pair_name,
-                            "price": f"{price:.{dec}f}",
-                            "basis": f"{bb_basis:.{dec}f}",
-                            "distance": f"{pips_diff:.1f}"
-                        })
-            else:
-                latest_status[pair_name] = "Syncing live data..."
-                
-            latest_status["last_update"] = time.strftime("%H:%M:%S UTC", time.gmtime())
-            time.sleep(0.5)
+                latest_status["last_update"] = get_bd_time()
+        except Exception:
+            pass
         time.sleep(CHECK_INTERVAL)
 
-threading.Thread(target=keep_alive, daemon=True).start()
-threading.Thread(target=bot_loop, daemon=True).start()
+# Thread Protection
+if not any(t.name == "bot_loop_thread" for t in threading.enumerate()):
+    threading.Thread(target=bot_loop, daemon=True, name="bot_loop_thread").start()
+
+if not any(t.name == "keep_alive_thread" for t in threading.enumerate()):
+    threading.Thread(target=keep_alive, daemon=True, name="keep_alive_thread").start()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-                
+                    
