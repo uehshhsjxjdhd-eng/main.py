@@ -7,14 +7,13 @@ app.secret_key = "super_secret_trading_key_2026"
 DEFAULT_PASSWORD = "Rakib98"
 
 SYMBOLS_CONFIG = {
-    "XAUUSD": {"pip_multiplier": 10, "pip_buffer": 14.6, "decimals": 2, "cg_id": "tether-gold"},
-    "BTCUSD": {"pip_multiplier": 1,  "pip_buffer": 19.5, "decimals": 2, "cg_id": "bitcoin"}
+    "XAUUSD": {"pip_multiplier": 10, "pip_buffer": 14.6, "decimals": 2, "bybit": "PAXGUSDT"},
+    "BTCUSD": {"pip_multiplier": 1,  "pip_buffer": 19.5, "decimals": 2, "bybit": "BTCUSDT"}
 }
 
 TELEGRAM_CHAT_IDS = ["8910581056"]
 latest_status = {"XAUUSD": "Fetching...", "BTCUSD": "Fetching...", "last_update": "Initializing..."}
 alert_history = []
-sma_cache = {"XAUUSD": 0.0, "BTCUSD": 0.0}
 
 TELEGRAM_BOT_TOKEN = "8642092487:AAEIHzt94t8xNMfn6kyWZP2FgdRqprPJWV8"
 RENDER_APP_URL = "https://telegram-signal-bot-1-uhq3.onrender.com"
@@ -175,14 +174,18 @@ def keep_alive():
         try: requests.get(RENDER_APP_URL, timeout=10)
         except Exception: pass
 
-def fetch_coingecko_prices():
-    headers = {"User-Agent": "Mozilla/5.0"}
-    url = "https://api.coingecko.com/api/v3/simple/price?ids=tether-gold,bitcoin&vs_currencies=usd"
+def fetch_bybit_data(pair, symbol_name):
+    url = f"https://api.bybit.com/v5/market/kline?category=spot&symbol={pair}&interval=15&limit=200"
     try:
-        r = requests.get(url, headers=headers, timeout=5)
+        r = requests.get(url, timeout=5)
         if r.status_code == 200:
-            data = r.json()
-            return float(data["tether-gold"]["usd"]), float(data["bitcoin"]["usd"])
+            res = r.json()
+            kline_list = res.get("result", {}).get("list", [])
+            if len(kline_list) >= 200:
+                closes = [float(k[4]) for k in kline_list]
+                current_price = closes[0]
+                sma_200 = sum(closes) / len(closes)
+                return current_price, sma_200
     except Exception: pass
     return None, None
 
@@ -191,23 +194,17 @@ def bot_loop():
     
     while True:
         try:
-            xau_p, btc_p = fetch_coingecko_prices()
-            prices = {"XAUUSD": xau_p, "BTCUSD": btc_p}
-            
             for pair, cfg in SYMBOLS_CONFIG.items():
-                price = prices.get(pair)
-                if price:
-                    # ২০০ SMA-এর আনুমানিক বেসিস ধরে ডিসটেন্স ক্যালকুলেশন
-                    basis = sma_cache[pair] if sma_cache[pair] > 0 else price
-                    diff = abs(price - basis) * cfg["pip_multiplier"]
-                    
-                    latest_status[pair] = f"Price: {price:.{cfg['decimals']}f} | 200 Line: {basis:.{cfg['decimals']}f} | Dist: {diff:.1f} Pips"
+                p, b = fetch_bybit_data(cfg["bybit"], pair)
+                if p and b:
+                    diff = abs(p - b) * cfg["pip_multiplier"]
+                    latest_status[pair] = f"Price: {p:.{cfg['decimals']}f} | 200 Line: {b:.{cfg['decimals']}f} | Dist: {diff:.1f} Pips"
                     
                     if diff <= cfg["pip_buffer"] and (time.time() - last_alerts[pair] > 300):
-                        msg = f"🚨 *{pair} ALERT!*\nPrice: {price:.{cfg['decimals']}f}\n200 Line: {basis:.{cfg['decimals']}f}\nDist: {diff:.1f} Pips\nTime: {get_bd_time()}"
+                        msg = f"🚨 *{pair} ALERT!*\nPrice: {p:.{cfg['decimals']}f}\n200 Line: {b:.{cfg['decimals']}f}\nDist: {diff:.1f} Pips\nTime: {get_bd_time()}"
                         send_telegram_broadcast(msg)
                         last_alerts[pair] = time.time()
-                        alert_history.insert(0, {"time": get_bd_time(), "symbol": pair, "price": f"{price:.{cfg['decimals']}f}", "basis": f"{basis:.{cfg['decimals']}f}", "distance": f"{diff:.1f}"})
+                        alert_history.insert(0, {"time": get_bd_time(), "symbol": pair, "price": f"{p:.{cfg['decimals']}f}", "basis": f"{b:.{cfg['decimals']}f}", "distance": f"{diff:.1f}"})
             
             latest_status["last_update"] = get_bd_time()
         except Exception: pass
@@ -221,4 +218,3 @@ start_threads()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
-    
