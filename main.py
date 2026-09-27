@@ -7,8 +7,8 @@ app.secret_key = "super_secret_trading_key_2026"
 DEFAULT_PASSWORD = "Rakib98"
 
 SYMBOLS_CONFIG = {
-    "XAUUSD": {"pip_multiplier": 10, "pip_buffer": 14.6, "decimals": 2, "ticker": "GC=F"},
-    "BTCUSD": {"pip_multiplier": 1,  "pip_buffer": 19.5, "decimals": 2, "ticker": "BTC-USD"}
+    "XAUUSD": {"pip_multiplier": 10, "pip_buffer": 14.6, "decimals": 2, "kucoin": "PAXG-USDT"},
+    "BTCUSD": {"pip_multiplier": 1,  "pip_buffer": 19.5, "decimals": 2, "kucoin": "BTC-USDT"}
 }
 
 TELEGRAM_CHAT_IDS = ["8910581056"]
@@ -174,23 +174,20 @@ def keep_alive():
         try: requests.get(RENDER_APP_URL, timeout=10)
         except Exception: pass
 
-def fetch_market_data(ticker):
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range=5d&interval=15m"
+def fetch_kucoin_data(symbol_pair):
+    headers = {"User-Agent": "Mozilla/5.0"}
+    url = f"https://api.kucoin.com/api/v1/market/candles?symbol={symbol_pair}&type=15min"
     try:
-        r = requests.get(url, headers=headers, timeout=8)
+        r = requests.get(url, headers=headers, timeout=5)
         if r.status_code == 200:
-            data = r.json()
-            result = data.get("chart", {}).get("result", [])[0]
-            closes = result.get("indicators", {}).get("quote", [])[0].get("close", [])
-            closes = [c for c in closes if c is not None]
-            if len(closes) >= 200:
-                current_price = closes[-1]
-                sma_200 = sum(closes[-200:]) / 200
-                return current_price, sma_200
-            elif len(closes) > 0:
-                current_price = closes[-1]
-                sma_200 = sum(closes) / len(closes)
+            data = r.json().get("data", [])
+            if len(data) > 0:
+                closes = [float(k[2]) for k in data] # KuCoin-এ k[2] হচ্ছে Close price
+                current_price = closes[0]
+                
+                # ২০-২০০ ক্যান্ডেল ডাটা নিয়ে SMA হিসেব
+                sma_count = min(len(closes), 200)
+                sma_200 = sum(closes[:sma_count]) / sma_count
                 return current_price, sma_200
     except Exception: pass
     return None, None
@@ -201,7 +198,7 @@ def bot_loop():
     while True:
         try:
             for pair, cfg in SYMBOLS_CONFIG.items():
-                p, b = fetch_market_data(cfg["ticker"])
+                p, b = fetch_kucoin_data(cfg["kucoin"])
                 if p and b:
                     diff = abs(p - b) * cfg["pip_multiplier"]
                     latest_status[pair] = f"Price: {p:.{cfg['decimals']}f} | 200 Line: {b:.{cfg['decimals']}f} | Dist: {diff:.1f} Pips"
