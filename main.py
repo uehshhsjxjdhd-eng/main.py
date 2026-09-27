@@ -17,7 +17,7 @@ alert_history = []
 
 TELEGRAM_BOT_TOKEN = "8642092487:AAEIHzt94t8xNMfn6kyWZP2FgdRqprPJWV8"
 RENDER_APP_URL = "https://telegram-signal-bot-1-uhq3.onrender.com"
-CHECK_INTERVAL = 3
+CHECK_INTERVAL = 2
 
 def get_bd_time():
     return datetime.now(timezone(timedelta(hours=6))).strftime("%I:%M:%S %p BST")
@@ -47,7 +47,7 @@ th{color:var(--cyan);} .badge{background:rgba(56,189,248,0.2);color:var(--cyan);
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
 <h2>🤖 15M Proximity Pro</h2><a href="/logout" style="color:var(--red);text-decoration:none;">Logout</a>
 </div>
-<p><b>Last Sync:</b> <span id="last_update" style="color:var(--cyan);">{{status['last_update']}}</span></p>
+<p><b>Last Sync:</b> <span id="last_update" style="color:var(--cyan);font-weight:bold;">{{status['last_update']}}</span></p>
 
 <div class="card" style="display:flex;gap:15px;align-items:center;">
 <h3>🔔 System Test:</h3>
@@ -98,16 +98,29 @@ new TradingView.widget({"autosize":true,"symbol":"OANDA:XAUUSD","interval":"15",
 </tbody></table></div>
 
 <script>
-function updateData(){
-fetch('/api/live_data').then(r=>r.json()).then(d=>{
-document.getElementById('status_xau').innerText=d.status.XAUUSD;
-document.getElementById('status_btc').innerText=d.status.BTCUSD;
-document.getElementById('last_update').innerText=d.status.last_update;
-let h='';
-if(d.history.length===0){h='<tr><td colspan="5" style="text-align:center;">No alerts yet.</td></tr>';}
-else{d.history.forEach(l=>{h+=`<tr><td>${l.time}</td><td><b>${l.symbol}</b></td><td>${l.price}</td><td>${l.distance} Pips</td></tr>`;});}
-document.getElementById('history_body').innerHTML=h;
-});} setInterval(updateData,3000);
+async function updateData() {
+    try {
+        let res = await fetch('/api/live_data?t=' + new Date().getTime());
+        if (res.ok) {
+            let d = await res.json();
+            document.getElementById('status_xau').innerText = d.status.XAUUSD;
+            document.getElementById('status_btc').innerText = d.status.BTCUSD;
+            document.getElementById('last_update').innerText = d.status.last_update;
+            let h = '';
+            if (!d.history || d.history.length === 0) {
+                h = '<tr><td colspan="5" style="text-align:center;">No alerts yet.</td></tr>';
+            } else {
+                d.history.forEach(l => {
+                    h += `<tr><td>${l.time}</td><td><b>${l.symbol}</b></td><td>${l.price}</td><td>${l.basis}</td><td>${l.distance} Pips</td></tr>`;
+                });
+            }
+            document.getElementById('history_body').innerHTML = h;
+        }
+    } catch (e) {
+        console.log("Fetch error:", e);
+    }
+}
+setInterval(updateData, 2000);
 </script>{% endif %}</div></body></html>
 """
 
@@ -170,26 +183,21 @@ def fetch_market_data(symbol):
     headers = {"User-Agent": "Mozilla/5.0"}
     pair = "PAXGUSDT" if symbol == "XAUUSD" else "BTCUSDT"
     
-    # Attempt 1: Binance Candlesticks
-    try:
-        r = requests.get(f"https://api.binance.com/api/v3/klines?symbol={pair}&interval=15m&limit=200", headers=headers, timeout=5)
-        if r.status_code == 200:
-            c = [float(x[4]) for x in r.json()]
-            return c[-1], sum(c)/len(c)
-    except Exception: pass
-    
-    # Attempt 2: Binance Vision Mirror
-    try:
-        r = requests.get(f"https://data-api.binance.vision/api/v3/klines?symbol={pair}&interval=15m&limit=200", headers=headers, timeout=5)
-        if r.status_code == 200:
-            c = [float(x[4]) for x in r.json()]
-            return c[-1], sum(c)/len(c)
-    except Exception: pass
+    endpoints = [
+        f"https://api.binance.com/api/v3/klines?symbol={pair}&interval=15m&limit=200",
+        f"https://data-api.binance.vision/api/v3/klines?symbol={pair}&interval=15m&limit=200"
+    ]
+    for url in endpoints:
+        try:
+            r = requests.get(url, headers=headers, timeout=3)
+            if r.status_code == 200:
+                c = [float(x[4]) for x in r.json()]
+                return c[-1], sum(c)/len(c)
+        except Exception: pass
 
-    # Attempt 3: CoinGecko Fallback
     try:
         cg_id = "tether-gold" if symbol == "XAUUSD" else "bitcoin"
-        r = requests.get(f"https://api.coingecko.com/api/v3/simple/price?ids={cg_id}&vs_currencies=usd", headers=headers, timeout=5)
+        r = requests.get(f"https://api.coingecko.com/api/v3/simple/price?ids={cg_id}&vs_currencies=usd", headers=headers, timeout=3)
         if r.status_code == 200:
             p = float(r.json()[cg_id]["usd"])
             return p, p
