@@ -7,8 +7,13 @@ from flask import Flask, request, jsonify, render_template_string
 app = Flask(__name__)
 
 # ---------------------------------------------------------
-# Global In-Memory Data Storage
+# Dynamic Memory & Active Bot Credentials
 # ---------------------------------------------------------
+TELEGRAM_BOT_TOKEN = "8642092487:AAEIHzt94t8xNMfn6kyWZP2FgdRqprPJWV8"
+
+# Default Chat IDs
+telegram_user_ids = ["8910581056"]
+
 latest_status = {
     "XAUUSD": {"text": "Waiting for MT4 Signal...", "color": "#9ca3af"},
     "BTCUSD": {"text": "Waiting for MT4 Signal...", "color": "#9ca3af"},
@@ -19,24 +24,15 @@ latest_status = {
 alert_history = []
 last_alert_times = {}
 
-# User-managed Telegram User ID/Chat ID list
-telegram_user_ids = []
-
-# Fetch Telegram Bot Token from environment variable or hardcoded fallback
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-
 # ---------------------------------------------------------
 # Helper Functions
 # ---------------------------------------------------------
 def get_bd_time():
-    """Returns formatted Bangladesh Local Time (UTC+6)."""
     bd_tz = timezone(timedelta(hours=6))
     return datetime.now(bd_tz).strftime("%Y-%m-%d %I:%M:%S %p")
 
 def send_telegram_broadcast(message_text):
-    """Sends broadcast alert to all registered Telegram chat IDs."""
-    if not TELEGRAM_BOT_TOKEN:
-        print("Telegram Bot Token is missing.")
+    if not TELEGRAM_BOT_TOKEN or not telegram_user_ids:
         return False
     
     success = True
@@ -50,15 +46,13 @@ def send_telegram_broadcast(message_text):
             }
             res = requests.post(url, json=payload, timeout=5)
             if res.status_code != 200:
-                print(f"Failed to send to {chat_id}: {res.text}")
                 success = False
-        except Exception as e:
-            print(f"Error sending message to {chat_id}: {e}")
+        except Exception:
             success = False
     return success
 
 # ---------------------------------------------------------
-# HTML Template for Dashboard
+# Dashboard UI Template
 # ---------------------------------------------------------
 DASHBOARD_HTML = """
 <!DOCTYPE html>
@@ -117,7 +111,7 @@ DASHBOARD_HTML = """
                 {% for uid in users %}
                 <span class="inline-flex items-center gap-2 bg-slate-700 text-slate-200 text-xs px-3 py-1.5 rounded-full" id="badge-{{ uid }}">
                     {{ uid }}
-                    <button onclick="removeTelegramUser('{{ uid }}')" class="text-slate-400 hover:text-red-400 font-bold">✕</button>
+                    <button onclick="removeTelegramUser('{{ uid }}')" class="text-slate-400 hover:text-red-400 font-bold ml-1">✕</button>
                 </span>
                 {% else %}
                 <p id="noUserText" class="text-xs text-slate-500">No Telegram User IDs registered yet.</p>
@@ -160,14 +154,12 @@ DASHBOARD_HTML = """
 
     </div>
 
-    <!-- Client-side JavaScript for Background AJAX Polling -->
     <script>
         async function fetchMarketData() {
             try {
                 const response = await fetch('/api/data');
                 const data = await response.json();
                 
-                // Update Market Cards
                 for (const [symbol, info] of Object.entries(data.status)) {
                     const el = document.getElementById(`status-${symbol}`);
                     if (el) {
@@ -176,7 +168,6 @@ DASHBOARD_HTML = """
                     }
                 }
 
-                // Update Alert History Table dynamically
                 if (data.history && data.history.length > 0) {
                     const historyBody = document.getElementById('historyTableBody');
                     historyBody.innerHTML = data.history.map(item => `
@@ -230,7 +221,7 @@ DASHBOARD_HTML = """
             container.innerHTML = resData.users.map(uid => `
                 <span class="inline-flex items-center gap-2 bg-slate-700 text-slate-200 text-xs px-3 py-1.5 rounded-full" id="badge-${uid}">
                     ${uid}
-                    <button onclick="removeTelegramUser('${uid}')" class="text-slate-400 hover:text-red-400 font-bold">✕</button>
+                    <button onclick="removeTelegramUser('${uid}')" class="text-slate-400 hover:text-red-400 font-bold ml-1">✕</button>
                 </span>
             `).join('');
         }
@@ -252,7 +243,6 @@ DASHBOARD_HTML = """
             }
         }
 
-        // Poll every 3 seconds for smooth background updates without reloading full page
         setInterval(fetchMarketData, 3000);
     </script>
 </body>
@@ -273,7 +263,6 @@ def dashboard():
 
 @app.route('/api/data', methods=['GET'])
 def api_data():
-    """Endpoint for asynchronous UI data fetching without full page reloads."""
     return jsonify({
         "status": latest_status,
         "history": alert_history
@@ -282,7 +271,6 @@ def api_data():
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
-        # Flexible JSON parsing to accept MQL4 payloads smoothly
         data = request.get_json(silent=True, force=True)
         if not data:
             import json
@@ -291,7 +279,6 @@ def webhook():
 
         raw_symbol = str(data.get("symbol", "")).upper()
         
-        # Match incoming symbol string
         symbol = "XAUUSD"
         if "BTC" in raw_symbol: 
             symbol = "BTCUSD"
@@ -309,22 +296,18 @@ def webhook():
         text_color = "#22c55e" if price >= basis else "#ef4444"
         position_text = "ABOVE" if price >= basis else "BELOW"
 
-        # Decimal precision formatting based on asset class
         fmt_price = f"{price:.5f}" if ("GBP" in symbol or "EUR" in symbol) else f"{price:.2f}"
         fmt_basis = f"{basis:.5f}" if ("GBP" in symbol or "EUR" in symbol) else f"{basis:.2f}"
 
         status_text = f"Price: {fmt_price} | 200 Line: {fmt_basis} | Dist: {distance:.1f} Pips ({position_text})"
         
-        # Update live dashboard state
         latest_status[symbol] = {
             "text": status_text,
             "color": text_color
         }
 
-        # Telegram Proximity Trigger Condition
         limit_pips = 20.0
         if distance <= limit_pips:
-            # 5-minute cooldown per symbol to avoid spam
             if time.time() - last_alert_times.get(symbol, 0) > 300:
                 direction_icon = "🟢 (ABOVE)" if price >= basis else "🔴 (BELOW)"
                 msg = (
@@ -338,7 +321,6 @@ def webhook():
                 send_telegram_broadcast(msg)
                 last_alert_times[symbol] = time.time()
 
-                # Add to history log
                 alert_history.insert(0, {
                     "time": get_bd_time(),
                     "symbol": symbol,
@@ -359,6 +341,7 @@ def add_user():
     user_id = request.form.get('user_id', '').strip()
     if user_id and user_id not in telegram_user_ids:
         telegram_user_ids.append(user_id)
+        send_telegram_broadcast(f"✅ *New Telegram ID Subscribed:* `{user_id}`")
     return jsonify({"status": "user_added", "users": telegram_user_ids}), 200
 
 @app.route('/delete_user', methods=['POST'])
