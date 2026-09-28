@@ -99,7 +99,7 @@ body { font-family: 'Inter', sans-serif; }
         </div>
     </div>
     <div class="glass-card rounded-2xl p-6 shadow-xl space-y-4">
-        <h2 class="text-base font-bold text-white flex items-center gap-2">📜 Trigger Log (<= 20 Pips)</h2>
+        <h2 class="text-base font-bold text-white flex items-center gap-2">📜 Trigger Log (<= 4.0 Pips)</h2>
         <div class="overflow-x-auto rounded-xl border border-slate-800">
             <table class="w-full text-left text-sm text-slate-300">
                 <thead class="text-xs text-slate-400 uppercase bg-slate-900/90 font-mono border-b border-slate-800">
@@ -229,8 +229,10 @@ def webhook():
 
         latest_status[symbol] = {"text": f"Price: {fmt_price} | 200 Line: {fmt_basis} | Dist: {distance:.1f} Pips ({position_text})", "color": text_color}
 
-        if distance <= 20.0 and time.time() - last_alert_times.get(symbol, 0) > 300:
-            msg = f"🚨 *MT4 PROXIMITY ALERT (20 PIPS)!* 🚨\n\n📊 *Symbol:* {symbol} (15m)\n📈 *Position:* {'🟢 (ABOVE)' if price >= basis else '🔴 (BELOW)'}\n📍 *Current Price:* {fmt_price}\n📉 *200 Basis Line:* {fmt_basis}\n📏 *Distance:* {distance:.1f} Pips"
+        # Updated Proximity Threshold to Fixed 4.0 Pips
+        limit_pips = 4.0
+        if distance <= limit_pips and time.time() - last_alert_times.get(symbol, 0) > 300:
+            msg = f"🚨 *MT4 PROXIMITY ALERT ({limit_pips} PIPS)!* 🚨\n\n📊 *Symbol:* {symbol} (15m)\n📈 *Position:* {'🟢 (ABOVE)' if price >= basis else '🔴 (BELOW)'}\n📍 *Current Price:* {fmt_price}\n📉 *200 Basis Line:* {fmt_basis}\n📏 *Distance:* {distance:.1f} Pips"
             send_telegram_broadcast(msg)
             last_alert_times[symbol] = time.time()
             alert_history.insert(0, {"time": get_bd_time(), "symbol": symbol, "price": fmt_price, "basis": fmt_basis, "distance": f"{distance:.1f}", "color": text_color})
