@@ -1,315 +1,240 @@
 import os
 import time
 import requests
-from datetime import datetime, timedelta, timezone
-from flask import Flask, request, session, redirect, render_template_string, jsonify, make_response
+from datetime import datetime, timezone, timedelta
+from flask import Flask, request, jsonify, render_template_string
 
 app = Flask(__name__)
-app.secret_key = "super_secret_trading_key_2026"
 
-DEFAULT_PASSWORD = "1234"
-
-# Fixed 20.0 Pips threshold for all pairs
-SYMBOLS_CONFIG = {
-    "XAUUSD": {"pip_buffer": 20.0},
-    "BTCUSD": {"pip_buffer": 20.0},
-    "GBPUSD": {"pip_buffer": 20.0},
-    "EURUSD": {"pip_buffer": 20.0}
-}
-
-# Dynamic Telegram Chat IDs Storage
-TELEGRAM_CHAT_IDS = ["8910581056"]
-TELEGRAM_BOT_TOKEN = "8642092487:AAEIHzt94t8xNMfn6kyWZP2FgdRqprPJWV8"
-
+# ---------------------------------------------------------
+# Global In-Memory Data Storage
+# ---------------------------------------------------------
 latest_status = {
-    "XAUUSD": {"text": "Waiting for MT4 Signal...", "color": "#f8fafc"},
-    "BTCUSD": {"text": "Waiting for MT4 Signal...", "color": "#f8fafc"},
-    "GBPUSD": {"text": "Waiting for MT4 Signal...", "color": "#f8fafc"},
-    "EURUSD": {"text": "Waiting for MT4 Signal...", "color": "#f8fafc"}
-}
-
-last_alert_times = {
-    "XAUUSD": 0, "BTCUSD": 0, "GBPUSD": 0, "EURUSD": 0
+    "XAUUSD": {"text": "Waiting for MT4 Signal...", "color": "#9ca3af"},
+    "BTCUSD": {"text": "Waiting for MT4 Signal...", "color": "#9ca3af"},
+    "GBPUSD": {"text": "Waiting for MT4 Signal...", "color": "#9ca3af"},
+    "EURUSD": {"text": "Waiting for MT4 Signal...", "color": "#9ca3af"}
 }
 
 alert_history = []
+last_alert_times = {}
 
+# User-managed Telegram User ID/Chat ID list
+telegram_user_ids = []
+
+# Fetch Telegram Bot Token from environment variable or hardcoded fallback
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+
+# ---------------------------------------------------------
+# Helper Functions
+# ---------------------------------------------------------
 def get_bd_time():
-    return datetime.now(timezone(timedelta(hours=6))).strftime("%I:%M:%S %p BST")
+    """Returns formatted Bangladesh Local Time (UTC+6)."""
+    bd_tz = timezone(timedelta(hours=6))
+    return datetime.now(bd_tz).strftime("%Y-%m-%d %I:%M:%S %p")
 
-HTML_LAYOUT = """
+def send_telegram_broadcast(message_text):
+    """Sends broadcast alert to all registered Telegram chat IDs."""
+    if not TELEGRAM_BOT_TOKEN:
+        print("Telegram Bot Token is missing.")
+        return
+    
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    for chat_id in telegram_user_ids:
+        try:
+            payload = {
+                "chat_id": chat_id,
+                "text": message_text,
+                "parse_mode": "Markdown"
+            }
+            requests.post(url, json=payload, timeout=5)
+        except Exception as e:
+            print(f"Error sending message to {chat_id}: {e}")
+
+# ---------------------------------------------------------
+# HTML Template for Dashboard
+# ---------------------------------------------------------
+DASHBOARD_HTML = """
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Pro Trading Terminal</title>
+    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 15px; background: #0f172a; color: #38bdf8; margin: 0; }
-        .container { max-width: 1200px; margin: auto; }
-        .card { background: #1e293b; border: 1px solid #334155; padding: 18px; border-radius: 12px; margin-bottom: 15px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.5); }
-        h1, h2, h3 { color: #f8fafc; margin-top: 0; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 15px; }
-        input, button { padding: 10px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #fff; margin-right: 5px; margin-bottom: 5px; }
-        button { background: #0284c7; cursor: pointer; border: none; font-weight: bold; }
-        button:hover { background: #0369a1; }
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-        th, td { border: 1px solid #334155; padding: 8px; text-align: left; font-size: 14px; }
-        th { background: #334155; color: #f8fafc; }
-        .login-box { max-width: 380px; margin: 80px auto; padding: 25px; text-align: center; }
-        .modal { display: none; position: fixed; z-index: 10; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); }
-        .modal-content { background: #1e293b; margin: 10% auto; padding: 20px; border-radius: 12px; max-width: 450px; border: 1px solid #475569; }
-        .close-btn { color: #ef4444; float: right; font-size: 24px; font-weight: bold; cursor: pointer; }
-    </style>
+    <title>Trading Engine Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <meta http-equiv="refresh" content="3">
 </head>
-<body>
-    <div class="container">
-        {% if not logged_in %}
-        <div class="card login-box">
-            <h2>🔒 Terminal Access</h2>
-            <form method="POST" action="/login">
-                <input type="password" name="password" placeholder="Enter Password" required style="width: 80%;">
-                <br><br>
-                <button type="submit">Unlock</button>
-            </form>
-        </div>
-        {% else %}
+<body class="bg-slate-900 text-slate-100 min-h-screen p-4 md:p-8 font-sans">
+    <div class="max-w-5xl mx-auto space-y-6">
         
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-            <h2 style="margin:0;">🤖 MT4 Multi-Asset Proximity Terminal</h2>
-            <a href="/logout" style="color: #ef4444; text-decoration: none; font-weight: bold;">Logout</a>
+        <!-- Header -->
+        <div class="flex justify-between items-center border-b border-slate-700 pb-4">
+            <div>
+                <h1 class="text-2xl font-bold text-white">MT4 Proximity Alert Dashboard</h1>
+                <p class="text-sm text-slate-400">Real-time status tracking & Telegram alerts</p>
+            </div>
+            <div class="text-right text-xs text-slate-400">
+                <span>Auto Refreshing (3s)</span>
+            </div>
         </div>
 
-        <div class="card">
-            <h3>⚙️ Actions & Telegram Broadcasts</h3>
-            <form method="POST" action="/test_alert" style="display: inline-block;">
-                <button type="submit" style="background: #16a34a;">🚀 Test Telegram</button>
+        <!-- Symbol Live Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {% for symbol, data in status.items() %}
+            <div class="bg-slate-800 border border-slate-700 rounded-lg p-5 shadow-lg">
+                <div class="flex justify-between items-center mb-2">
+                    <h2 class="text-lg font-semibold text-slate-200">{{ symbol }}</h2>
+                    <span class="text-xs px-2 py-1 rounded bg-slate-700 text-slate-300">15m</span>
+                </div>
+                <div class="p-3 rounded text-sm font-mono font-medium" style="background-color: #1e293b; color: {{ data.color }};">
+                    {{ data.text }}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- Telegram User ID Management -->
+        <div class="bg-slate-800 border border-slate-700 rounded-lg p-5 shadow-lg space-y-4">
+            <h2 class="text-lg font-semibold text-slate-200">Telegram Alert Subscribers</h2>
+            
+            <form action="/add_user" method="POST" class="flex gap-2">
+                <input type="text" name="user_id" placeholder="Enter Telegram Chat/User ID" required 
+                       class="bg-slate-900 border border-slate-700 text-slate-100 text-sm rounded px-3 py-2 flex-1 focus:outline-none focus:border-blue-500">
+                <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm px-4 py-2 rounded transition">
+                    Add ID
+                </button>
             </form>
-            <button onclick="openModal()" style="background: #6366f1;">📋 Telegram IDs (Details)</button>
-        </div>
 
-        <!-- Telegram ID Modal -->
-        <div id="idModal" class="modal">
-            <div class="modal-content">
-                <span class="close-btn" onclick="closeModal()">&times;</span>
-                <h3>📱 Managed Telegram Chat IDs</h3>
-                <ul>
-                    {% for cid in chat_ids %}
-                    <li><b>{{ cid }}</b> 
-                        {% if loop.index > 1 %}
-                        <a href="/remove_id/{{ cid }}" style="color:#ef4444; margin-left:10px; text-decoration:none;">[Remove]</a>
-                        {% endif %}
-                    </li>
-                    {% endfor %}
-                </ul>
-                <hr style="border-color: #334155;">
-                <h4>Add New Chat ID</h4>
-                <form method="POST" action="/add_id">
-                    <input type="text" name="chat_id" placeholder="Enter Telegram Chat ID" required style="width: 70%;">
-                    <button type="submit">Add ID</button>
-                </form>
-            </div>
-        </div>
-
-        <!-- Live Market Grid -->
-        <div class="grid">
-            <div class="card">
-                <h3>📌 XAUUSD (Gold 15m)</h3>
-                <p id="status_XAUUSD" style="font-size: 15px; font-weight: bold; color: {{ status['XAUUSD']['color'] }};">{{ status['XAUUSD']['text'] }}</p>
-                <small>Target: <= 20.0 Pips</small>
-            </div>
-            <div class="card">
-                <h3>📌 BTCUSD (Bitcoin 15m)</h3>
-                <p id="status_BTCUSD" style="font-size: 15px; font-weight: bold; color: {{ status['BTCUSD']['color'] }};">{{ status['BTCUSD']['text'] }}</p>
-                <small>Target: <= 20.0 Pips</small>
-            </div>
-            <div class="card">
-                <h3>📌 GBPUSD (Cable 15m)</h3>
-                <p id="status_GBPUSD" style="font-size: 15px; font-weight: bold; color: {{ status['GBPUSD']['color'] }};">{{ status['GBPUSD']['text'] }}</p>
-                <small>Target: <= 20.0 Pips</small>
-            </div>
-            <div class="card">
-                <h3>📌 EURUSD (Euro 15m)</h3>
-                <p id="status_EURUSD" style="font-size: 15px; font-weight: bold; color: {{ status['EURUSD']['color'] }};">{{ status['EURUSD']['text'] }}</p>
-                <small>Target: <= 20.0 Pips</small>
+            <div class="flex flex-wrap gap-2">
+                {% for uid in users %}
+                <span class="inline-flex items-center gap-2 bg-slate-700 text-slate-200 text-xs px-3 py-1.5 rounded-full">
+                    {{ uid }}
+                    <form action="/delete_user" method="POST" class="inline">
+                        <input type="hidden" name="user_id" value="{{ uid }}">
+                        <button type="submit" class="text-slate-400 hover:text-red-400 font-bold">✕</button>
+                    </form>
+                </span>
+                {% else %}
+                <p class="text-xs text-slate-500">No Telegram User IDs registered yet.</p>
+                {% endfor %}
             </div>
         </div>
 
         <!-- Alert History Log -->
-        <div class="card">
-            <h3>📜 Proximity Alert Log</h3>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Time (BST)</th>
-                        <th>Symbol</th>
-                        <th>Price</th>
-                        <th>200 Line</th>
-                        <th>Distance</th>
-                    </tr>
-                </thead>
-                <tbody id="history_body">
-                    {% for log in history %}
-                    <tr>
-                        <td>{{ log['time'] }}</td>
-                        <td><b>{{ log['symbol'] }}</b></td>
-                        <td style="color: {{ log['color'] }}; font-weight:bold;">{{ log['price'] }}</td>
-                        <td>{{ log['basis'] }}</td>
-                        <td style="color: {{ log['color'] }}; font-weight:bold;">{{ log['distance'] }} Pips</td>
-                    </tr>
-                    {% else %}
-                    <tr>
-                        <td colspan="5" style="text-align: center; color: #64748b;">No alerts triggered yet.</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+        <div class="bg-slate-800 border border-slate-700 rounded-lg p-5 shadow-lg space-y-3">
+            <h2 class="text-lg font-semibold text-slate-200">Proximity Alert History (<= 20 Pips)</h2>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left text-sm text-slate-300">
+                    <thead class="text-xs text-slate-400 uppercase bg-slate-900/50 border-b border-slate-700">
+                        <tr>
+                            <th class="py-2 px-3">Time (BD)</th>
+                            <th class="py-2 px-3">Symbol</th>
+                            <th class="py-2 px-3">Price</th>
+                            <th class="py-2 px-3">200 Basis</th>
+                            <th class="py-2 px-3">Distance</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-700/50">
+                        {% for item in history %}
+                        <tr class="hover:bg-slate-750">
+                            <td class="py-2 px-3 text-xs text-slate-400">{{ item.time }}</td>
+                            <td class="py-2 px-3 font-semibold">{{ item.symbol }}</td>
+                            <td class="py-2 px-3 font-mono" style="color: {{ item.color }}">{{ item.price }}</td>
+                            <td class="py-2 px-3 font-mono">{{ item.basis }}</td>
+                            <td class="py-2 px-3 font-mono font-bold text-amber-400">{{ item.distance }} Pips</td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="5" class="py-4 text-center text-xs text-slate-500">No proximity alerts recorded yet.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
         </div>
-        
-        <script>
-            function openModal() { document.getElementById('idModal').style.display = 'block'; }
-            function closeModal() { document.getElementById('idModal').style.display = 'none'; }
 
-            function updateData() {
-                fetch('/api/live_data?_nocache=' + new Date().getTime(), { cache: 'no-store' })
-                    .then(response => response.json())
-                    .then(data => {
-                        if(data.status) {
-                            ["XAUUSD", "BTCUSD", "GBPUSD", "EURUSD"].forEach(sym => {
-                                if(data.status[sym]) {
-                                    let el = document.getElementById('status_' + sym);
-                                    if(el) {
-                                        el.innerText = data.status[sym].text;
-                                        el.style.color = data.status[sym].color;
-                                    }
-                                }
-                            });
-                        }
-
-                        let historyHtml = '';
-                        if (!data.history || data.history.length === 0) {
-                            historyHtml = '<tr><td colspan="5" style="text-align: center; color: #64748b;">No alerts triggered yet.</td></tr>';
-                        } else {
-                            data.history.forEach(log => {
-                                historyHtml += `<tr>
-                                    <td>${log.time}</td>
-                                    <td><b>${log.symbol}</b></td>
-                                    <td style="color:${log.color}; font-weight:bold;">${log.price}</td>
-                                    <td>${log.basis}</td>
-                                    <td style="color:${log.color}; font-weight:bold;">${log.distance} Pips</td>
-                                </tr>`;
-                            });
-                        }
-                        document.getElementById('history_body').innerHTML = historyHtml;
-                    })
-                    .catch(err => console.error("Fetch Error:", err));
-            }
-
-            setInterval(updateData, 2000);
-        </script>
-        {% endif %}
     </div>
 </body>
 </html>
 """
 
-@app.route('/', methods=['GET'])
-def home():
-    logged_in = session.get('logged_in', False)
-    return render_template_string(HTML_LAYOUT, logged_in=logged_in, status=latest_status, history=alert_history, chat_ids=TELEGRAM_CHAT_IDS)
-
-@app.route('/api/live_data', methods=['GET'])
-def live_data():
-    res = make_response(jsonify({
-        "status": latest_status,
-        "history": alert_history
-    }))
-    res.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-    return res
-
-@app.route('/login', methods=['POST'])
-def login():
-    if request.form.get('password') == DEFAULT_PASSWORD:
-        session['logged_in'] = True
-    return redirect('/')
-
-@app.route('/logout')
-def logout():
-    session.pop('logged_in', None)
-    return redirect('/')
-
-@app.route('/add_id', methods=['POST'])
-def add_id():
-    if session.get('logged_in'):
-        new_id = request.form.get('chat_id', '').strip()
-        if new_id and new_id not in TELEGRAM_CHAT_IDS:
-            TELEGRAM_CHAT_IDS.append(new_id)
-            send_telegram_broadcast(f"✅ *New Chat ID Added:* `{new_id}`")
-    return redirect('/')
-
-@app.route('/remove_id/<chat_id>', methods=['GET'])
-def remove_id(chat_id):
-    if session.get('logged_in') and chat_id in TELEGRAM_CHAT_IDS:
-        if len(TELEGRAM_CHAT_IDS) > 1:
-            TELEGRAM_CHAT_IDS.remove(chat_id)
-    return redirect('/')
-
-@app.route('/test_alert', methods=['POST'])
-def test_alert():
-    if session.get('logged_in'):
-        send_telegram_broadcast("🚀 *TEST ALERT:* MT4 Live Webhook Engine Active!")
-    return redirect('/')
+# ---------------------------------------------------------
+# Flask Web Routes
+# ---------------------------------------------------------
+@app.route('/')
+def dashboard():
+    return render_template_string(
+        DASHBOARD_HTML, 
+        status=latest_status, 
+        users=telegram_user_ids, 
+        history=alert_history
+    )
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
-        data = request.get_json(force=True)
+        # Flexible JSON parsing to accept MQL4 payloads smoothly
+        data = request.get_json(silent=True, force=True)
         if not data:
-            return jsonify({"status": "error"}), 400
+            import json
+            raw_text = request.get_data(as_text=True)
+            data = json.loads(raw_text)
 
-        raw_symbol = data.get("symbol", "").upper()
+        raw_symbol = str(data.get("symbol", "")).upper()
+        
+        # Match incoming symbol string
         symbol = "XAUUSD"
-        if "BTC" in raw_symbol: symbol = "BTCUSD"
-        elif "XAU" in raw_symbol or "GOLD" in raw_symbol: symbol = "XAUUSD"
-        elif "GBP" in raw_symbol: symbol = "GBPUSD"
-        elif "EUR" in raw_symbol: symbol = "EURUSD"
+        if "BTC" in raw_symbol: 
+            symbol = "BTCUSD"
+        elif "XAU" in raw_symbol or "GOLD" in raw_symbol: 
+            symbol = "XAUUSD"
+        elif "GBP" in raw_symbol: 
+            symbol = "GBPUSD"
+        elif "EUR" in raw_symbol: 
+            symbol = "EURUSD"
 
         price = float(data.get("price", 0))
         basis = float(data.get("basis", 0))
         distance = float(data.get("distance", 0))
 
-        # Color logic: Green above 200 Line, Red below 200 Line
         text_color = "#22c55e" if price >= basis else "#ef4444"
         position_text = "ABOVE" if price >= basis else "BELOW"
 
-        status_text = f"Price: {price:.5f if 'USD' in symbol and 'BTC' not in symbol and 'XAU' not in symbol else price:.2f} | 200 Line: {basis:.5f if 'USD' in symbol and 'BTC' not in symbol and 'XAU' not in symbol else basis:.2f} | Dist: {distance:.1f} Pips ({position_text})"
+        # Decimal precision formatting based on asset class
+        fmt_price = f"{price:.5f}" if ("GBP" in symbol or "EUR" in symbol) else f"{price:.2f}"
+        fmt_basis = f"{basis:.5f}" if ("GBP" in symbol or "EUR" in symbol) else f"{basis:.2f}"
+
+        status_text = f"Price: {fmt_price} | 200 Line: {fmt_basis} | Dist: {distance:.1f} Pips ({position_text})"
         
+        # Update live dashboard state
         latest_status[symbol] = {
             "text": status_text,
             "color": text_color
         }
 
-        # 20 Pips Limit
+        # Telegram Proximity Trigger Condition
         limit_pips = 20.0
-        
         if distance <= limit_pips:
+            # 5-minute cooldown per symbol to avoid spam
             if time.time() - last_alert_times.get(symbol, 0) > 300:
                 direction_icon = "🟢 (ABOVE)" if price >= basis else "🔴 (BELOW)"
                 msg = (
                     f"🚨 *MT4 PROXIMITY ALERT ({limit_pips} PIPS)!* 🚨\n\n"
-                    f"📊 **Symbol:** {symbol} (15m)\n"
-                    f"📈 **Position:** {direction_icon}\n"
-                    f"📍 **Current Price:** {price}\n"
-                    f"📉 **200 Basis Line:** {basis}\n"
-                    f"📏 **Distance:** {distance:.1f} Pips"
+                    f"📊 *Symbol:* {symbol} (15m)\n"
+                    f"📈 *Position:* {direction_icon}\n"
+                    f"📍 *Current Price:* {fmt_price}\n"
+                    f"📉 *200 Basis Line:* {fmt_basis}\n"
+                    f"📏 *Distance:* {distance:.1f} Pips"
                 )
                 send_telegram_broadcast(msg)
                 last_alert_times[symbol] = time.time()
 
+                # Add to history log
                 alert_history.insert(0, {
                     "time": get_bd_time(),
                     "symbol": symbol,
-                    "price": f"{price}",
-                    "basis": f"{basis}",
+                    "price": fmt_price,
+                    "basis": fmt_basis,
                     "distance": f"{distance:.1f}",
                     "color": text_color
                 })
@@ -317,18 +242,27 @@ def webhook():
         return jsonify({"status": "success"}), 200
 
     except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 400
+        print("Webhook Processing Error:", str(e))
+        # Return 200 OK so MT4 doesn't log 400 error codes
+        return jsonify({"status": "error", "message": str(e)}), 200
 
-def send_telegram_broadcast(text):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    for chat_id in TELEGRAM_CHAT_IDS:
-        payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
-        try:
-            requests.post(url, data=payload, timeout=5)
-        except Exception:
-            pass
+@app.route('/add_user', methods=['POST'])
+def add_user():
+    user_id = request.form.get('user_id', '').strip()
+    if user_id and user_id not in telegram_user_ids:
+        telegram_user_ids.append(user_id)
+    return jsonify({"status": "user_added", "users": telegram_user_ids}), 200
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
-                
+@app.route('/delete_user', methods=['POST'])
+def delete_user():
+    user_id = request.form.get('user_id', '').strip()
+    if user_id in telegram_user_ids:
+        telegram_user_ids.remove(user_id)
+    return jsonify({"status": "user_deleted", "users": telegram_user_ids}), 200
+
+# ---------------------------------------------------------
+# Application Entrypoint
+# ---------------------------------------------------------
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
