@@ -205,16 +205,20 @@ def webhook():
         data = request.get_json(silent=True, force=True) or json.loads(request.get_data(as_text=True))
         raw_symbol = str(data.get("symbol", "")).upper()
         
-        symbol = "XAUUSD"
+        symbol = None
         if "BTC" in raw_symbol: symbol = "BTCUSD"
         elif "XAU" in raw_symbol or "GOLD" in raw_symbol: symbol = "XAUUSD"
         elif "GBP" in raw_symbol: symbol = "GBPUSD"
         elif "EUR" in raw_symbol: symbol = "EURUSD"
 
-        price, basis, distance = float(data.get("price", 0)), float(data.get("basis", 0)), float(data.get("distance", 0))
+        if not symbol:
+            return jsonify({"status": "ignored", "reason": "unknown_symbol"}), 200
+
+        price = float(data.get("price", 0))
+        basis = float(data.get("basis", 0))
+        distance = float(data.get("distance", 0))
         
-        # Valid price check: Allow prices > 0.1 (Fixes EURUSD / GBPUSD filter issue)
-        if price <= 0.1 or basis <= 0.1:
+        if price <= 0.00001 or basis <= 0.00001:
             return jsonify({"status": "ignored", "reason": "invalid_price"}), 200
 
         text_color = "#10b981" if price >= basis else "#ef4444"
@@ -258,3 +262,4 @@ def test_alert():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+    
