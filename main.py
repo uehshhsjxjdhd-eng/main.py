@@ -37,8 +37,9 @@ def send_telegram_broadcast(message_text):
     """Sends broadcast alert to all registered Telegram chat IDs."""
     if not TELEGRAM_BOT_TOKEN:
         print("Telegram Bot Token is missing.")
-        return
+        return False
     
+    success = True
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     for chat_id in telegram_user_ids:
         try:
@@ -47,9 +48,14 @@ def send_telegram_broadcast(message_text):
                 "text": message_text,
                 "parse_mode": "Markdown"
             }
-            requests.post(url, json=payload, timeout=5)
+            res = requests.post(url, json=payload, timeout=5)
+            if res.status_code != 200:
+                print(f"Failed to send to {chat_id}: {res.text}")
+                success = False
         except Exception as e:
             print(f"Error sending message to {chat_id}: {e}")
+            success = False
+    return success
 
 # ---------------------------------------------------------
 # HTML Template for Dashboard
@@ -62,31 +68,33 @@ DASHBOARD_HTML = """
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Trading Engine Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <meta http-equiv="refresh" content="3">
 </head>
 <body class="bg-slate-900 text-slate-100 min-h-screen p-4 md:p-8 font-sans">
     <div class="max-w-5xl mx-auto space-y-6">
         
         <!-- Header -->
-        <div class="flex justify-between items-center border-b border-slate-700 pb-4">
+        <div class="flex flex-wrap justify-between items-center border-b border-slate-700 pb-4 gap-4">
             <div>
                 <h1 class="text-2xl font-bold text-white">MT4 Proximity Alert Dashboard</h1>
                 <p class="text-sm text-slate-400">Real-time status tracking & Telegram alerts</p>
             </div>
-            <div class="text-right text-xs text-slate-400">
-                <span>Auto Refreshing (3s)</span>
+            <div class="flex items-center gap-3">
+                <button onclick="sendTestAlert()" id="testBtn" class="bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-xs px-3 py-2 rounded transition shadow">
+                    🧪 Send Test Alert
+                </button>
+                <span class="text-xs text-slate-400 bg-slate-800 px-2.5 py-1.5 rounded border border-slate-700">Live API Syncing</span>
             </div>
         </div>
 
         <!-- Symbol Live Cards -->
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="symbolCards">
             {% for symbol, data in status.items() %}
             <div class="bg-slate-800 border border-slate-700 rounded-lg p-5 shadow-lg">
                 <div class="flex justify-between items-center mb-2">
                     <h2 class="text-lg font-semibold text-slate-200">{{ symbol }}</h2>
                     <span class="text-xs px-2 py-1 rounded bg-slate-700 text-slate-300">15m</span>
                 </div>
-                <div class="p-3 rounded text-sm font-mono font-medium" style="background-color: #1e293b; color: {{ data.color }};">
+                <div id="status-{{ symbol }}" class="p-3 rounded text-sm font-mono font-medium" style="background-color: #1e293b; color: {{ data.color }};">
                     {{ data.text }}
                 </div>
             </div>
@@ -97,25 +105,22 @@ DASHBOARD_HTML = """
         <div class="bg-slate-800 border border-slate-700 rounded-lg p-5 shadow-lg space-y-4">
             <h2 class="text-lg font-semibold text-slate-200">Telegram Alert Subscribers</h2>
             
-            <form action="/add_user" method="POST" class="flex gap-2">
-                <input type="text" name="user_id" placeholder="Enter Telegram Chat/User ID" required 
+            <div class="flex gap-2">
+                <input type="text" id="newUserId" placeholder="Enter Telegram Chat/User ID" 
                        class="bg-slate-900 border border-slate-700 text-slate-100 text-sm rounded px-3 py-2 flex-1 focus:outline-none focus:border-blue-500">
-                <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm px-4 py-2 rounded transition">
+                <button onclick="addTelegramUser()" class="bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm px-4 py-2 rounded transition">
                     Add ID
                 </button>
-            </form>
+            </div>
 
-            <div class="flex flex-wrap gap-2">
+            <div class="flex flex-wrap gap-2" id="userBadgeContainer">
                 {% for uid in users %}
-                <span class="inline-flex items-center gap-2 bg-slate-700 text-slate-200 text-xs px-3 py-1.5 rounded-full">
+                <span class="inline-flex items-center gap-2 bg-slate-700 text-slate-200 text-xs px-3 py-1.5 rounded-full" id="badge-{{ uid }}">
                     {{ uid }}
-                    <form action="/delete_user" method="POST" class="inline">
-                        <input type="hidden" name="user_id" value="{{ uid }}">
-                        <button type="submit" class="text-slate-400 hover:text-red-400 font-bold">✕</button>
-                    </form>
+                    <button onclick="removeTelegramUser('{{ uid }}')" class="text-slate-400 hover:text-red-400 font-bold">✕</button>
                 </span>
                 {% else %}
-                <p class="text-xs text-slate-500">No Telegram User IDs registered yet.</p>
+                <p id="noUserText" class="text-xs text-slate-500">No Telegram User IDs registered yet.</p>
                 {% endfor %}
             </div>
         </div>
@@ -134,7 +139,7 @@ DASHBOARD_HTML = """
                             <th class="py-2 px-3">Distance</th>
                         </tr>
                     </thead>
-                    <tbody class="divide-y divide-slate-700/50">
+                    <tbody class="divide-y divide-slate-700/50" id="historyTableBody">
                         {% for item in history %}
                         <tr class="hover:bg-slate-750">
                             <td class="py-2 px-3 text-xs text-slate-400">{{ item.time }}</td>
@@ -144,7 +149,7 @@ DASHBOARD_HTML = """
                             <td class="py-2 px-3 font-mono font-bold text-amber-400">{{ item.distance }} Pips</td>
                         </tr>
                         {% else %}
-                        <tr>
+                        <tr id="emptyHistoryRow">
                             <td colspan="5" class="py-4 text-center text-xs text-slate-500">No proximity alerts recorded yet.</td>
                         </tr>
                         {% endfor %}
@@ -154,6 +159,102 @@ DASHBOARD_HTML = """
         </div>
 
     </div>
+
+    <!-- Client-side JavaScript for Background AJAX Polling -->
+    <script>
+        async function fetchMarketData() {
+            try {
+                const response = await fetch('/api/data');
+                const data = await response.json();
+                
+                // Update Market Cards
+                for (const [symbol, info] of Object.entries(data.status)) {
+                    const el = document.getElementById(`status-${symbol}`);
+                    if (el) {
+                        el.innerText = info.text;
+                        el.style.color = info.color;
+                    }
+                }
+
+                // Update Alert History Table dynamically
+                if (data.history && data.history.length > 0) {
+                    const historyBody = document.getElementById('historyTableBody');
+                    historyBody.innerHTML = data.history.map(item => `
+                        <tr class="hover:bg-slate-750">
+                            <td class="py-2 px-3 text-xs text-slate-400">${item.time}</td>
+                            <td class="py-2 px-3 font-semibold">${item.symbol}</td>
+                            <td class="py-2 px-3 font-mono" style="color: ${item.color}">${item.price}</td>
+                            <td class="py-2 px-3 font-mono">${item.basis}</td>
+                            <td class="py-2 px-3 font-mono font-bold text-amber-400">${item.distance} Pips</td>
+                        </tr>
+                    `).join('');
+                }
+            } catch (err) {
+                console.error("Error fetching market data:", err);
+            }
+        }
+
+        async function addTelegramUser() {
+            const input = document.getElementById('newUserId');
+            const uid = input.value.trim();
+            if (!uid) return;
+
+            const res = await fetch('/add_user', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                body: `user_id=${encodeURIComponent(uid)}`
+            });
+            if (res.ok) {
+                input.value = '';
+                renderUsers(await res.json());
+            }
+        }
+
+        async function removeTelegramUser(uid) {
+            const res = await fetch('/delete_user', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                body: `user_id=${encodeURIComponent(uid)}`
+            });
+            if (res.ok) {
+                renderUsers(await res.json());
+            }
+        }
+
+        function renderUsers(resData) {
+            const container = document.getElementById('userBadgeContainer');
+            if (!resData.users || resData.users.length === 0) {
+                container.innerHTML = `<p id="noUserText" class="text-xs text-slate-500">No Telegram User IDs registered yet.</p>`;
+                return;
+            }
+            container.innerHTML = resData.users.map(uid => `
+                <span class="inline-flex items-center gap-2 bg-slate-700 text-slate-200 text-xs px-3 py-1.5 rounded-full" id="badge-${uid}">
+                    ${uid}
+                    <button onclick="removeTelegramUser('${uid}')" class="text-slate-400 hover:text-red-400 font-bold">✕</button>
+                </span>
+            `).join('');
+        }
+
+        async function sendTestAlert() {
+            const btn = document.getElementById('testBtn');
+            btn.innerText = "⏳ Sending...";
+            btn.disabled = true;
+
+            try {
+                const res = await fetch('/test_alert', { method: 'POST' });
+                const result = await res.json();
+                alert(result.message);
+            } catch (e) {
+                alert("Error sending test alert");
+            } finally {
+                btn.innerText = "🧪 Send Test Alert";
+                btn.disabled = false;
+            }
+        }
+
+        // Poll every 3 seconds for smooth background updates without reloading full page
+        setInterval(fetchMarketData, 3000);
+    </script>
 </body>
 </html>
 """
@@ -169,6 +270,14 @@ def dashboard():
         users=telegram_user_ids, 
         history=alert_history
     )
+
+@app.route('/api/data', methods=['GET'])
+def api_data():
+    """Endpoint for asynchronous UI data fetching without full page reloads."""
+    return jsonify({
+        "status": latest_status,
+        "history": alert_history
+    }), 200
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -243,7 +352,6 @@ def webhook():
 
     except Exception as e:
         print("Webhook Processing Error:", str(e))
-        # Return 200 OK so MT4 doesn't log 400 error codes
         return jsonify({"status": "error", "message": str(e)}), 200
 
 @app.route('/add_user', methods=['POST'])
@@ -260,9 +368,25 @@ def delete_user():
         telegram_user_ids.remove(user_id)
     return jsonify({"status": "user_deleted", "users": telegram_user_ids}), 200
 
+@app.route('/test_alert', methods=['POST'])
+def test_alert():
+    if not telegram_user_ids:
+        return jsonify({"status": "error", "message": "No Telegram IDs added to send alert!"}), 400
+    
+    test_msg = (
+        "🧪 *TEST ALERT FROM TRADING ENGINE* 🧪\n\n"
+        "Your Telegram ID is successfully connected to the MT4 Proximity Alert Engine!"
+    )
+    sent = send_telegram_broadcast(test_msg)
+    if sent:
+        return jsonify({"status": "success", "message": "Test alert sent to all subscribed Telegram IDs!"}), 200
+    else:
+        return jsonify({"status": "error", "message": "Failed to send alert. Check Bot Token or User IDs."}), 500
+
 # ---------------------------------------------------------
 # Application Entrypoint
 # ---------------------------------------------------------
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
+    
