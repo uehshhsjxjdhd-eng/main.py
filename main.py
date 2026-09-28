@@ -9,22 +9,27 @@ app.secret_key = "super_secret_trading_key_2026"
 
 DEFAULT_PASSWORD = "1234"
 
+# Fixed 20.0 Pips threshold for all pairs
 SYMBOLS_CONFIG = {
-    "XAUUSD": {"pip_buffer": 14.6},
-    "BTCUSD": {"pip_buffer": 19.5}
+    "XAUUSD": {"pip_buffer": 20.0},
+    "BTCUSD": {"pip_buffer": 20.0},
+    "GBPUSD": {"pip_buffer": 20.0},
+    "EURUSD": {"pip_buffer": 20.0}
 }
 
+# Dynamic Telegram Chat IDs Storage
 TELEGRAM_CHAT_IDS = ["8910581056"]
 TELEGRAM_BOT_TOKEN = "8642092487:AAEIHzt94t8xNMfn6kyWZP2FgdRqprPJWV8"
 
 latest_status = {
-    "XAUUSD": "Waiting for MT4 Live Signal...",
-    "BTCUSD": "Waiting for MT4 Live Signal..."
+    "XAUUSD": {"text": "Waiting for MT4 Signal...", "color": "#f8fafc"},
+    "BTCUSD": {"text": "Waiting for MT4 Signal...", "color": "#f8fafc"},
+    "GBPUSD": {"text": "Waiting for MT4 Signal...", "color": "#f8fafc"},
+    "EURUSD": {"text": "Waiting for MT4 Signal...", "color": "#f8fafc"}
 }
 
 last_alert_times = {
-    "XAUUSD": 0,
-    "BTCUSD": 0
+    "XAUUSD": 0, "BTCUSD": 0, "GBPUSD": 0, "EURUSD": 0
 }
 
 alert_history = []
@@ -43,7 +48,7 @@ HTML_LAYOUT = """
         .container { max-width: 1200px; margin: auto; }
         .card { background: #1e293b; border: 1px solid #334155; padding: 18px; border-radius: 12px; margin-bottom: 15px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.5); }
         h1, h2, h3 { color: #f8fafc; margin-top: 0; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 15px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 15px; }
         input, button { padding: 10px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #fff; margin-right: 5px; margin-bottom: 5px; }
         button { background: #0284c7; cursor: pointer; border: none; font-weight: bold; }
         button:hover { background: #0369a1; }
@@ -51,51 +56,87 @@ HTML_LAYOUT = """
         th, td { border: 1px solid #334155; padding: 8px; text-align: left; font-size: 14px; }
         th { background: #334155; color: #f8fafc; }
         .login-box { max-width: 380px; margin: 80px auto; padding: 25px; text-align: center; }
+        .modal { display: none; position: fixed; z-index: 10; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); }
+        .modal-content { background: #1e293b; margin: 10% auto; padding: 20px; border-radius: 12px; max-width: 450px; border: 1px solid #475569; }
+        .close-btn { color: #ef4444; float: right; font-size: 24px; font-weight: bold; cursor: pointer; }
     </style>
 </head>
 <body>
     <div class="container">
         {% if not logged_in %}
         <div class="card login-box">
-            <h2>🔒 Dashboard Access</h2>
+            <h2>🔒 Terminal Access</h2>
             <form method="POST" action="/login">
                 <input type="password" name="password" placeholder="Enter Password" required style="width: 80%;">
                 <br><br>
-                <button type="submit">Unlock Terminal</button>
+                <button type="submit">Unlock</button>
             </form>
-            {% if error %}<p style="color: #ef4444;">{{ error }}</p>{% endif %}
         </div>
         {% else %}
         
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-            <h2 style="margin:0;">🤖 MT4 Proximity Live Terminal</h2>
+            <h2 style="margin:0;">🤖 MT4 Multi-Asset Proximity Terminal</h2>
             <a href="/logout" style="color: #ef4444; text-decoration: none; font-weight: bold;">Logout</a>
         </div>
 
         <div class="card">
-            <h3>⚙️ Actions</h3>
+            <h3>⚙️ Actions & Telegram Broadcasts</h3>
             <form method="POST" action="/test_alert" style="display: inline-block;">
                 <button type="submit" style="background: #16a34a;">🚀 Test Telegram</button>
             </form>
+            <button onclick="openModal()" style="background: #6366f1;">📋 Telegram IDs (Details)</button>
         </div>
 
-        <!-- Live Price Grid -->
+        <!-- Telegram ID Modal -->
+        <div id="idModal" class="modal">
+            <div class="modal-content">
+                <span class="close-btn" onclick="closeModal()">&times;</span>
+                <h3>📱 Managed Telegram Chat IDs</h3>
+                <ul>
+                    {% for cid in chat_ids %}
+                    <li><b>{{ cid }}</b> 
+                        {% if loop.index > 1 %}
+                        <a href="/remove_id/{{ cid }}" style="color:#ef4444; margin-left:10px; text-decoration:none;">[Remove]</a>
+                        {% endif %}
+                    </li>
+                    {% endfor %}
+                </ul>
+                <hr style="border-color: #334155;">
+                <h4>Add New Chat ID</h4>
+                <form method="POST" action="/add_id">
+                    <input type="text" name="chat_id" placeholder="Enter Telegram Chat ID" required style="width: 70%;">
+                    <button type="submit">Add ID</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Live Market Grid -->
         <div class="grid">
             <div class="card">
-                <h3>📌 XAUUSD (Gold Spot)</h3>
-                <p id="status_xau" style="font-size: 15px; font-weight: bold; color: #f8fafc;">{{ status['XAUUSD'] }}</p>
-                <small>Alert Target: <= 14.6 Pips</small>
+                <h3>📌 XAUUSD (Gold 15m)</h3>
+                <p id="status_XAUUSD" style="font-size: 15px; font-weight: bold; color: {{ status['XAUUSD']['color'] }};">{{ status['XAUUSD']['text'] }}</p>
+                <small>Target: <= 20.0 Pips</small>
             </div>
             <div class="card">
-                <h3>📌 BTCUSD (Bitcoin)</h3>
-                <p id="status_btc" style="font-size: 15px; font-weight: bold; color: #f8fafc;">{{ status['BTCUSD'] }}</p>
-                <small>Alert Target: <= 19.5 Pips</small>
+                <h3>📌 BTCUSD (Bitcoin 15m)</h3>
+                <p id="status_BTCUSD" style="font-size: 15px; font-weight: bold; color: {{ status['BTCUSD']['color'] }};">{{ status['BTCUSD']['text'] }}</p>
+                <small>Target: <= 20.0 Pips</small>
+            </div>
+            <div class="card">
+                <h3>📌 GBPUSD (Cable 15m)</h3>
+                <p id="status_GBPUSD" style="font-size: 15px; font-weight: bold; color: {{ status['GBPUSD']['color'] }};">{{ status['GBPUSD']['text'] }}</p>
+                <small>Target: <= 20.0 Pips</small>
+            </div>
+            <div class="card">
+                <h3>📌 EURUSD (Euro 15m)</h3>
+                <p id="status_EURUSD" style="font-size: 15px; font-weight: bold; color: {{ status['EURUSD']['color'] }};">{{ status['EURUSD']['text'] }}</p>
+                <small>Target: <= 20.0 Pips</small>
             </div>
         </div>
 
-        <!-- History Log -->
+        <!-- Alert History Log -->
         <div class="card">
-            <h3>📜 Telegram Alert History Log</h3>
+            <h3>📜 Proximity Alert Log</h3>
             <table>
                 <thead>
                     <tr>
@@ -111,9 +152,9 @@ HTML_LAYOUT = """
                     <tr>
                         <td>{{ log['time'] }}</td>
                         <td><b>{{ log['symbol'] }}</b></td>
-                        <td>{{ log['price'] }}</td>
+                        <td style="color: {{ log['color'] }}; font-weight:bold;">{{ log['price'] }}</td>
                         <td>{{ log['basis'] }}</td>
-                        <td>{{ log['distance'] }} Pips</td>
+                        <td style="color: {{ log['color'] }}; font-weight:bold;">{{ log['distance'] }} Pips</td>
                     </tr>
                     {% else %}
                     <tr>
@@ -125,13 +166,23 @@ HTML_LAYOUT = """
         </div>
         
         <script>
+            function openModal() { document.getElementById('idModal').style.display = 'block'; }
+            function closeModal() { document.getElementById('idModal').style.display = 'none'; }
+
             function updateData() {
                 fetch('/api/live_data?_nocache=' + new Date().getTime(), { cache: 'no-store' })
                     .then(response => response.json())
                     .then(data => {
                         if(data.status) {
-                            if(data.status.XAUUSD) document.getElementById('status_xau').innerText = data.status.XAUUSD;
-                            if(data.status.BTCUSD) document.getElementById('status_btc').innerText = data.status.BTCUSD;
+                            ["XAUUSD", "BTCUSD", "GBPUSD", "EURUSD"].forEach(sym => {
+                                if(data.status[sym]) {
+                                    let el = document.getElementById('status_' + sym);
+                                    if(el) {
+                                        el.innerText = data.status[sym].text;
+                                        el.style.color = data.status[sym].color;
+                                    }
+                                }
+                            });
                         }
 
                         let historyHtml = '';
@@ -142,15 +193,15 @@ HTML_LAYOUT = """
                                 historyHtml += `<tr>
                                     <td>${log.time}</td>
                                     <td><b>${log.symbol}</b></td>
-                                    <td>${log.price}</td>
+                                    <td style="color:${log.color}; font-weight:bold;">${log.price}</td>
                                     <td>${log.basis}</td>
-                                    <td>${log.distance} Pips</td>
+                                    <td style="color:${log.color}; font-weight:bold;">${log.distance} Pips</td>
                                 </tr>`;
                             });
                         }
                         document.getElementById('history_body').innerHTML = historyHtml;
                     })
-                    .catch(err => console.error("API Fetch Error:", err));
+                    .catch(err => console.error("Fetch Error:", err));
             }
 
             setInterval(updateData, 2000);
@@ -164,7 +215,7 @@ HTML_LAYOUT = """
 @app.route('/', methods=['GET'])
 def home():
     logged_in = session.get('logged_in', False)
-    return render_template_string(HTML_LAYOUT, logged_in=logged_in, status=latest_status, history=alert_history)
+    return render_template_string(HTML_LAYOUT, logged_in=logged_in, status=latest_status, history=alert_history, chat_ids=TELEGRAM_CHAT_IDS)
 
 @app.route('/api/live_data', methods=['GET'])
 def live_data():
@@ -186,10 +237,26 @@ def logout():
     session.pop('logged_in', None)
     return redirect('/')
 
+@app.route('/add_id', methods=['POST'])
+def add_id():
+    if session.get('logged_in'):
+        new_id = request.form.get('chat_id', '').strip()
+        if new_id and new_id not in TELEGRAM_CHAT_IDS:
+            TELEGRAM_CHAT_IDS.append(new_id)
+            send_telegram_broadcast(f"✅ *New Chat ID Added:* `{new_id}`")
+    return redirect('/')
+
+@app.route('/remove_id/<chat_id>', methods=['GET'])
+def remove_id(chat_id):
+    if session.get('logged_in') and chat_id in TELEGRAM_CHAT_IDS:
+        if len(TELEGRAM_CHAT_IDS) > 1:
+            TELEGRAM_CHAT_IDS.remove(chat_id)
+    return redirect('/')
+
 @app.route('/test_alert', methods=['POST'])
 def test_alert():
     if session.get('logged_in'):
-        send_telegram_broadcast("✅ *TEST ALERT:* MT4 Live Webhook Engine Active!")
+        send_telegram_broadcast("🚀 *TEST ALERT:* MT4 Live Webhook Engine Active!")
     return redirect('/')
 
 @app.route('/webhook', methods=['POST'])
@@ -199,28 +266,40 @@ def webhook():
         if not data:
             return jsonify({"status": "error"}), 400
 
-        symbol = data.get("symbol", "UNKNOWN")
-        if "BTC" in symbol:
-            symbol = "BTCUSD"
-        elif "XAU" in symbol or "GOLD" in symbol:
-            symbol = "XAUUSD"
+        raw_symbol = data.get("symbol", "").upper()
+        symbol = "XAUUSD"
+        if "BTC" in raw_symbol: symbol = "BTCUSD"
+        elif "XAU" in raw_symbol or "GOLD" in raw_symbol: symbol = "XAUUSD"
+        elif "GBP" in raw_symbol: symbol = "GBPUSD"
+        elif "EUR" in raw_symbol: symbol = "EURUSD"
 
         price = float(data.get("price", 0))
         basis = float(data.get("basis", 0))
         distance = float(data.get("distance", 0))
 
-        status_text = f"Price: {price:.2f} | 200 Line: {basis:.2f} | Distance: {distance:.1f} Pips"
-        latest_status[symbol] = status_text
+        # Color logic: Green above 200 Line, Red below 200 Line
+        text_color = "#22c55e" if price >= basis else "#ef4444"
+        position_text = "ABOVE" if price >= basis else "BELOW"
 
-        limit_pips = SYMBOLS_CONFIG.get(symbol, {}).get("pip_buffer", 15.0)
+        status_text = f"Price: {price:.5f if 'USD' in symbol and 'BTC' not in symbol and 'XAU' not in symbol else price:.2f} | 200 Line: {basis:.5f if 'USD' in symbol and 'BTC' not in symbol and 'XAU' not in symbol else basis:.2f} | Dist: {distance:.1f} Pips ({position_text})"
+        
+        latest_status[symbol] = {
+            "text": status_text,
+            "color": text_color
+        }
+
+        # 20 Pips Limit
+        limit_pips = 20.0
         
         if distance <= limit_pips:
             if time.time() - last_alert_times.get(symbol, 0) > 300:
+                direction_icon = "🟢 (ABOVE)" if price >= basis else "🔴 (BELOW)"
                 msg = (
                     f"🚨 *MT4 PROXIMITY ALERT ({limit_pips} PIPS)!* 🚨\n\n"
-                    f"📊 **Symbol:** {symbol}\n"
-                    f"📍 **Current Price:** {price:.2f}\n"
-                    f"📉 **200 Basis Line:** {basis:.2f}\n"
+                    f"📊 **Symbol:** {symbol} (15m)\n"
+                    f"📈 **Position:** {direction_icon}\n"
+                    f"📍 **Current Price:** {price}\n"
+                    f"📉 **200 Basis Line:** {basis}\n"
                     f"📏 **Distance:** {distance:.1f} Pips"
                 )
                 send_telegram_broadcast(msg)
@@ -229,9 +308,10 @@ def webhook():
                 alert_history.insert(0, {
                     "time": get_bd_time(),
                     "symbol": symbol,
-                    "price": f"{price:.2f}",
-                    "basis": f"{basis:.2f}",
-                    "distance": f"{distance:.1f}"
+                    "price": f"{price}",
+                    "basis": f"{basis}",
+                    "distance": f"{distance:.1f}",
+                    "color": text_color
                 })
 
         return jsonify({"status": "success"}), 200
@@ -251,4 +331,4 @@ def send_telegram_broadcast(text):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-    
+                
