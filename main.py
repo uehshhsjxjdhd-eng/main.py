@@ -18,7 +18,7 @@ latest_status = {
 alert_history, last_alert_times = [], {}
 
 def get_bd_time():
-    return datetime.now(timezone(timedelta(hours=6))).strftime("%Y-%m-%d %I:%M:%S %p")
+    return datetime.now(timezone(timedelta(hours=6))).strftime("%I:%M:%S %p")
 
 def send_telegram_broadcast(msg):
     if not TELEGRAM_BOT_TOKEN or not telegram_user_ids: return False
@@ -204,14 +204,17 @@ def webhook():
     try:
         data = request.get_json(silent=True, force=True) or json.loads(request.get_data(as_text=True))
         raw_symbol = str(data.get("symbol", "")).upper()
+        
         symbol = "XAUUSD"
         if "BTC" in raw_symbol: symbol = "BTCUSD"
+        elif "XAU" in raw_symbol or "GOLD" in raw_symbol: symbol = "XAUUSD"
         elif "GBP" in raw_symbol: symbol = "GBPUSD"
         elif "EUR" in raw_symbol: symbol = "EURUSD"
 
         price, basis, distance = float(data.get("price", 0)), float(data.get("basis", 0)), float(data.get("distance", 0))
         text_color = "#10b981" if price >= basis else "#ef4444"
         position_text = "ABOVE" if price >= basis else "BELOW"
+        
         fmt_price = f"{price:.5f}" if symbol in ["GBPUSD", "EURUSD"] else f"{price:.2f}"
         fmt_basis = f"{basis:.5f}" if symbol in ["GBPUSD", "EURUSD"] else f"{basis:.2f}"
 
