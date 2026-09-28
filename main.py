@@ -213,8 +213,8 @@ def webhook():
 
         price, basis, distance = float(data.get("price", 0)), float(data.get("basis", 0)), float(data.get("distance", 0))
         
-        # Filter out invalid prices (e.g. 5.50 or <= 10.0 for Gold/Forex)
-        if price <= 10.0 or basis <= 10.0:
+        # Valid price check: Allow prices > 0.1 (Fixes EURUSD / GBPUSD filter issue)
+        if price <= 0.1 or basis <= 0.1:
             return jsonify({"status": "ignored", "reason": "invalid_price"}), 200
 
         text_color = "#10b981" if price >= basis else "#ef4444"
@@ -258,4 +258,3 @@ def test_alert():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
-    
