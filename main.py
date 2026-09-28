@@ -212,6 +212,11 @@ def webhook():
         elif "EUR" in raw_symbol: symbol = "EURUSD"
 
         price, basis, distance = float(data.get("price", 0)), float(data.get("basis", 0)), float(data.get("distance", 0))
+        
+        # Filter out invalid prices (e.g. 5.50 or <= 10.0 for Gold/Forex)
+        if price <= 10.0 or basis <= 10.0:
+            return jsonify({"status": "ignored", "reason": "invalid_price"}), 200
+
         text_color = "#10b981" if price >= basis else "#ef4444"
         position_text = "ABOVE" if price >= basis else "BELOW"
         
